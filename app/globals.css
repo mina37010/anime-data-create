@@ -1,26 +1,105 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafaf9;
+  --foreground: #18181b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
+  min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.primary-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  background: #18181b;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #ffffff;
+  transition:
+    background-color 150ms ease,
+    opacity 150ms ease;
+}
+
+.primary-button:not(:disabled):hover {
+  background: #3f3f46;
+}
+
+.control-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d4d4d8;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #27272a;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.control-button:not(:disabled):hover {
+  border-color: #71717a;
+  background: #f4f4f5;
+}
+
+.field-label {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #52525b;
+}
+
+.field-control {
+  min-height: 2.5rem;
+  width: 100%;
+  border: 1px solid #d4d4d8;
+  border-radius: 0.375rem;
+  background: #ffffff;
+  padding: 0.5rem 0.625rem;
+  color: #18181b;
+  outline: none;
+}
+
+.field-control:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.15);
 }
