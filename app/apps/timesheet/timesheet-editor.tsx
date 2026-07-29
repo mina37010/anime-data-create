@@ -8,6 +8,8 @@ const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "bmp", "tif", "tif
 const xlsxExtensions = new Set(["xlsx", "xlsm", "xls"]);
 const defaultLayers = ["A", "B", "C", "D", "E", "F"];
 const frameRate = 24;
+const popupMinTop = 12;
+const popupMinLeft = 12;
 
 type ImageEntry = {
   file: File;
@@ -80,6 +82,18 @@ function isImageFile(file: File) {
 
 function isWorkbookFile(file: File) {
   return xlsxExtensions.has(fileExtension(file));
+}
+
+function isTextFile(file: File) {
+  return fileExtension(file) === "txt";
+}
+
+function fileDisplayName(file: File) {
+  return file.webkitRelativePath || file.name;
+}
+
+function fileIdentity(file: File) {
+  return `${fileDisplayName(file)}:${file.size}:${file.lastModified}`;
 }
 
 function isTiffFile(file: File) {
@@ -164,7 +178,7 @@ function insertedLayerName(layers: string[], insertIndex: number) {
   return uniqueLayerName(layers, `${baseName}_un`);
 }
 
-function createBlankTimesheet(frameCount = frameRate * 6): TimesheetData {
+function createBlankTimesheet(frameCount = 0): TimesheetData {
   return {
     title: "タイムシート",
     frameCount,
@@ -503,6 +517,21 @@ function parseSectionFromRaw(
   };
 }
 
+function countTimingDataRows(raw: RawSheet, dataStartRow: number, columnStart: number, columnEnd: number) {
+  let lastDataRow = dataStartRow - 1;
+  for (let row = dataStartRow; row <= raw.maxRow; row += 1) {
+    for (let col = columnStart; col <= columnEnd; col += 1) {
+      const value = raw.cells.get(cellKey(row, col));
+      if (valueToText(value).trim() !== "") {
+        lastDataRow = row;
+        break;
+      }
+    }
+  }
+
+  return Math.max(0, lastDataRow - dataStartRow + 1);
+}
+
 function parseTimesheet(raw: RawSheet): TimesheetData {
   const headerRow = findFrameHeaderRow(raw);
   const titleValue = headerRow > 0 ? valueToText(raw.cells.get(cellKey(0, 0))).trim() : "";
@@ -513,14 +542,20 @@ function parseTimesheet(raw: RawSheet): TimesheetData {
 
   const dataStartRow = headerRow + 1;
   const frameRows: number[] = [];
+  let maxFrameNumber = 0;
   for (let row = dataStartRow; row <= raw.maxRow; row += 1) {
     const frameValue = raw.cells.get(cellKey(row, gengaFrameColumn));
     if (frameValue !== undefined && frameValue !== "") {
       frameRows.push(row);
+      const frameNumber = Number(frameValue);
+      if (Number.isFinite(frameNumber)) {
+        maxFrameNumber = Math.max(maxFrameNumber, Math.floor(frameNumber));
+      }
     }
   }
 
-  const frameCount = Math.max(frameRows.length, frameRate);
+  const timingDataRowCount = countTimingDataRows(raw, dataStartRow, gengaFrameColumn, raw.maxCol);
+  const frameCount = Math.max(frameRows.length, maxFrameNumber, timingDataRowCount);
   const gengaSection = parseSectionFromRaw(
     raw,
     headers,
@@ -571,9 +606,9 @@ function buildWorkbook(timesheet: TimesheetData) {
 export function TimesheetEditor() {
   const [timesheet, setTimesheet] = useState<TimesheetData>(() => createBlankTimesheet());
   const [images, setImages] = useState<ImageEntry[]>([]);
-  const [seconds, setSeconds] = useState(6);
+  const [seconds, setSeconds] = useState(0);
   const [additionalFrames, setAdditionalFrames] = useState(0);
-  const [secondsDraft, setSecondsDraft] = useState("6");
+  const [secondsDraft, setSecondsDraft] = useState("0");
   const [additionalFramesDraft, setAdditionalFramesDraft] = useState("0");
   const [cellZoom, setCellZoom] = useState(1);
   const [imageZoom, setImageZoom] = useState(1);
@@ -583,6 +618,9 @@ export function TimesheetEditor() {
   const [deleteLayerIndex, setDeleteLayerIndex] = useState(defaultLayers.length - 1);
   const [cellSelection, setCellSelection] = useState<CellSelection | null>(null);
   const [cellSelectionActive, setCellSelectionActive] = useState(false);
+  const [workbookCandidates, setWorkbookCandidates] = useState<File[]>([]);
+  const [selectedWorkbookKey, setSelectedWorkbookKey] = useState("");
+  const [textNotes, setTextNotes] = useState("");
   const [status, setStatus] = useState("タイムシート入力アプリのフォルダを読み込んでください。");
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -592,6 +630,7 @@ export function TimesheetEditor() {
     [timesheet],
   );
   const safeDeleteLayerIndex = Math.min(deleteLayerIndex, Math.max(0, layerOptions.length - 1));
+  const selectedWorkbookFile = workbookCandidates.find((file) => fileIdentity(file) === selectedWorkbookKey) ?? workbookCandidates[0] ?? null;
   const gengaLayerCount = timesheet.sections.find((section) => section.id === "genga")?.layers.length ?? 0;
   const selectedCellCount = useMemo(() => {
     if (!cellSelection) {
@@ -617,7 +656,7 @@ export function TimesheetEditor() {
     setSeconds(safeSeconds);
     setAdditionalFrames(safeFrames);
     setTimesheet((previous) => {
-      const nextFrameCount = Math.max(1, safeSeconds * frameRate + safeFrames);
+      const nextFrameCount = Math.max(0, safeSeconds * frameRate + safeFrames);
       return {
         ...previous,
         frameCount: nextFrameCount,
@@ -815,10 +854,28 @@ export function TimesheetEditor() {
     setStatus("原画欄を変換し、動画欄へ反映しました。");
   }
 
+  async function loadWorkbookFile(workbookFile: File, imageCount: number) {
+    const raw = await readRawSheet(workbookFile);
+    const parsed = synchronizeLayerNames(raw ? parseTimesheet(raw) : createBlankTimesheet());
+    setTimesheet(parsed);
+    syncDurationFromFrameCount(parsed.frameCount);
+    setCellSelection(null);
+    setCellSelectionActive(false);
+    setStatus(`${imageCount}件の画像と ${fileDisplayName(workbookFile)} を読み込みました。`);
+  }
+
+  async function loadSelectedWorkbook() {
+    if (!selectedWorkbookFile) {
+      return;
+    }
+    await loadWorkbookFile(selectedWorkbookFile, images.length);
+  }
+
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    const workbookFile = files.filter(isWorkbookFile).sort((a, b) => a.name.localeCompare(b.name, "ja"))[0] ?? null;
+    const workbookFiles = files.filter(isWorkbookFile).sort((a, b) => fileDisplayName(a).localeCompare(fileDisplayName(b), "ja"));
     const imageFiles = files.filter(isImageFile).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    const textFiles = files.filter(isTextFile).sort((a, b) => fileDisplayName(a).localeCompare(fileDisplayName(b), "ja"));
     const nextImages = (
       await Promise.all(
         imageFiles.map(async (file) => {
@@ -831,23 +888,34 @@ export function TimesheetEditor() {
         }),
       )
     ).filter((image): image is ImageEntry => image !== null);
+    const nextTextNotes = (
+      await Promise.all(
+        textFiles.map(async (file) => {
+          const text = await file.text();
+          return textFiles.length > 1 ? `【${fileDisplayName(file)}】\n${text.trim()}` : text.trim();
+        }),
+      )
+    )
+      .filter(Boolean)
+      .join("\n\n");
 
     for (const image of images) {
       URL.revokeObjectURL(image.url);
     }
 
     setImages(nextImages);
-    if (workbookFile) {
-      const raw = await readRawSheet(workbookFile);
-      const parsed = synchronizeLayerNames(raw ? parseTimesheet(raw) : createBlankTimesheet());
-      setTimesheet(parsed);
-      syncDurationFromFrameCount(parsed.frameCount);
-      setStatus(`${imageFiles.length}件の画像と ${workbookFile.name} を読み込みました。`);
+    setTextNotes(nextTextNotes);
+    setWorkbookCandidates(workbookFiles);
+    setSelectedWorkbookKey(workbookFiles[0] ? fileIdentity(workbookFiles[0]) : "");
+    if (workbookFiles.length === 1) {
+      await loadWorkbookFile(workbookFiles[0], imageFiles.length);
+    } else if (workbookFiles.length > 1) {
+      setStatus(`${imageFiles.length}件の画像と ${workbookFiles.length}件のXLSXを読み込みました。使用するXLSXを選択してください。`);
     } else {
       const blank = synchronizeLayerNames(createBlankTimesheet());
       setTimesheet(blank);
       syncDurationFromFrameCount(blank.frameCount);
-      setStatus(`${imageFiles.length}件の画像を読み込みました。XLSXがないため新規作成しました。`);
+      setStatus(`${imageFiles.length}件の画像を読み込みました。XLSXがないため0Fから新規作成しました。`);
     }
     event.target.value = "";
   }
@@ -873,8 +941,8 @@ export function TimesheetEditor() {
     setPopupDragStart({
       pointerX: event.clientX,
       pointerY: event.clientY,
-      x: popupPosition.x,
-      y: popupPosition.y,
+      x: Math.max(popupMinLeft, popupPosition.x),
+      y: Math.max(popupMinTop, popupPosition.y),
     });
   }
 
@@ -883,8 +951,8 @@ export function TimesheetEditor() {
       return;
     }
     setPopupPosition({
-      x: popupDragStart.x + event.clientX - popupDragStart.pointerX,
-      y: popupDragStart.y + event.clientY - popupDragStart.pointerY,
+      x: Math.max(popupMinLeft, popupDragStart.x + event.clientX - popupDragStart.pointerX),
+      y: Math.max(popupMinTop, popupDragStart.y + event.clientY - popupDragStart.pointerY),
     });
   }
 
@@ -956,7 +1024,7 @@ export function TimesheetEditor() {
               type="file"
               className="hidden"
               multiple
-              accept="image/*,.tif,.tiff,.xlsx,.xlsm,.xls"
+              accept="image/*,.tif,.tiff,.xlsx,.xlsm,.xls,.txt"
               onChange={handleFolderSelect}
             />
             <button className="control-button" type="button" onClick={() => folderInputRef.current?.click()}>
@@ -998,6 +1066,29 @@ export function TimesheetEditor() {
           <button className="primary-button" type="button" onClick={applyGengaConversion}>
             原画変換
           </button>
+          {textNotes ? (
+            <div className="max-h-16 min-w-[220px] max-w-xl overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs leading-relaxed whitespace-pre-wrap text-zinc-800">
+              {textNotes}
+            </div>
+          ) : null}
+          {workbookCandidates.length > 1 ? (
+            <div className="flex min-w-[260px] items-center gap-1.5">
+              <select
+                className="h-[2.125rem] min-w-0 flex-1 rounded border border-zinc-300 bg-white px-2 text-sm font-semibold text-zinc-900"
+                value={selectedWorkbookKey}
+                onChange={(event) => setSelectedWorkbookKey(event.target.value)}
+              >
+                {workbookCandidates.map((file) => (
+                  <option value={fileIdentity(file)} key={fileIdentity(file)}>
+                    {fileDisplayName(file)}
+                  </option>
+                ))}
+              </select>
+              <button className="control-button" type="button" onClick={loadSelectedWorkbook}>
+                読込
+              </button>
+            </div>
+          ) : null}
           {imagePanelMode === "hidden" ? (
             <button className="control-button" type="button" onClick={() => setImagePanelMode("dock")}>
               画像表示
@@ -1142,9 +1233,8 @@ export function TimesheetEditor() {
 
       {imagePanelMode === "popup" ? (
         <div
-          className="fixed z-50 grid h-[min(720px,86vh)] max-h-[86vh] w-[min(620px,92vw)] min-w-0 resize overflow-hidden rounded-lg border border-zinc-300 bg-white shadow-2xl"
+          className="fixed z-50 grid h-[70vh] min-h-[280px] w-[min(620px,92vw)] min-w-[320px] resize overflow-hidden rounded-lg border border-zinc-300 bg-white shadow-2xl"
           style={{ left: `${popupPosition.x}px`, top: `${popupPosition.y}px` }}
-          onPointerDown={handlePopupPointerDown}
           onPointerMove={handlePopupPointerMove}
           onPointerUp={() => setPopupDragStart(null)}
           onPointerCancel={() => setPopupDragStart(null)}
@@ -1157,6 +1247,7 @@ export function TimesheetEditor() {
             onHide={() => setImagePanelMode("hidden")}
             zoom={imageZoom}
             onZoomChange={setImageZoom}
+            onDragStart={handlePopupPointerDown}
             popup
           />
         </div>
@@ -1230,6 +1321,7 @@ function ImagePanel({
   onPopup,
   onHide,
   onZoomChange,
+  onDragStart,
 }: {
   images: ImageEntry[];
   selectedImages: ImageEntry[];
@@ -1239,14 +1331,20 @@ function ImagePanel({
   onPopup: () => void;
   onHide: () => void;
   onZoomChange?: (zoom: number) => void;
+  onDragStart?: (event: PointerEvent<HTMLElement>) => void;
 }) {
+  const [imageListOpen, setImageListOpen] = useState(false);
+
   function updateZoom(nextZoom: number) {
     onZoomChange?.(Math.min(4, Math.max(0.4, Number(nextZoom.toFixed(2)))));
   }
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
-      <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+      <div
+        className={classNames("mb-2 flex min-w-0 items-center justify-between gap-2", popup && "cursor-move")}
+        onPointerDown={popup ? onDragStart : undefined}
+      >
         <h2 className="text-sm font-semibold text-zinc-900">{popup ? "画像 - ドラッグで移動" : "画像"}</h2>
         <div className="flex items-center gap-1.5">
           <button data-popup-control className="control-button" type="button" onClick={onPopup}>
@@ -1281,17 +1379,31 @@ function ImagePanel({
           />
         </div>
       ) : null}
-      <div data-popup-control className="mb-2 max-h-32 min-w-0 overflow-auto rounded border border-zinc-200 p-2">
-        {images.length > 0 ? (
-          images.map((image) => (
-            <label key={image.name} className="flex items-center gap-2 py-1 text-xs text-zinc-700">
-              <input type="checkbox" checked={image.selected} onChange={() => onToggleImage(image.name)} />
-              <span className="min-w-0 truncate">{image.name}</span>
-            </label>
-          ))
-        ) : (
-          <p className="text-xs text-zinc-500">画像がありません。</p>
-        )}
+      <div data-popup-control className="mb-2 min-w-0 rounded border border-zinc-200">
+        <button
+          className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+          type="button"
+          onClick={() => setImageListOpen((previous) => !previous)}
+        >
+          <span>画像選択</span>
+          <span className="text-zinc-500">
+            {selectedImages.length}/{images.length} {imageListOpen ? "閉じる" : "開く"}
+          </span>
+        </button>
+        {imageListOpen ? (
+          <div className="max-h-32 overflow-auto border-t border-zinc-200 p-2">
+            {images.length > 0 ? (
+              images.map((image) => (
+                <label key={image.name} className="flex items-center gap-2 py-1 text-xs text-zinc-700">
+                  <input type="checkbox" checked={image.selected} onChange={() => onToggleImage(image.name)} />
+                  <span className="min-w-0 truncate">{image.name}</span>
+                </label>
+              ))
+            ) : (
+              <p className="text-xs text-zinc-500">画像がありません。</p>
+            )}
+          </div>
+        ) : null}
       </div>
       <div data-popup-control className="min-h-0 w-full max-w-full flex-1 overflow-auto overscroll-contain rounded border border-zinc-200 bg-zinc-950 p-2">
         {selectedImages.length > 0 ? (
