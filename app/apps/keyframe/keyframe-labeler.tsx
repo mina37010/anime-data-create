@@ -1427,8 +1427,8 @@ export function KeyframeLabeler() {
         )}
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:pr-1">
-        <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+      <aside className="flex min-h-0 flex-col gap-2 overflow-y-auto lg:pr-1">
+        <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
             <input
               ref={(node) => {
@@ -1475,7 +1475,7 @@ export function KeyframeLabeler() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
             <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
               <div className="grid gap-1">
@@ -1650,9 +1650,9 @@ export function KeyframeLabeler() {
           </div>
         </section>
 
-        <section className="min-h-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <h2 className="text-sm font-semibold tracking-normal text-zinc-900">既存行</h2>
-          <div className="mt-2 max-h-36 overflow-auto rounded-md border border-zinc-200 lg:max-h-none">
+          <div className="mt-2 max-h-40 overflow-auto rounded-md border border-zinc-200 lg:max-h-52">
             {currentAnnotations.length > 0 ? (
               currentAnnotations.map((annotation, rowIndex) => (
                 <button
@@ -1680,7 +1680,9 @@ export function KeyframeLabeler() {
           </div>
         </section>
 
-        <p className="rounded-lg border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700 shadow-sm">{status}</p>
+        <p className="sticky bottom-0 z-10 max-h-24 shrink-0 overflow-auto rounded-lg border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700 shadow-sm">
+          {status}
+        </p>
       </aside>
     </div>
   );
