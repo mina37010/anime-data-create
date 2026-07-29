@@ -18,4 +18,10 @@ export const apps: AppDefinition[] = [
     description: "レイアウト、ラフ原画、修正、参考、Book、白紙をCSV化します。",
     status: "available",
   },
+  {
+    href: "/apps/timesheet",
+    name: "タイムシート入力",
+    description: "画像とXLSXを読み込み、秒数・フレーム数・レイヤーを編集して書き出します。",
+    status: "available",
+  },
 ];

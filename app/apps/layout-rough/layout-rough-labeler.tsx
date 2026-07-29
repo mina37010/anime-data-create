@@ -25,7 +25,7 @@ const csvColumns = [
   "material_type",
   "classification",
 ] as const;
-const imageAccept = "image/*,.tif,.tiff";
+const imageAccept = "image/*,.tif,.tiff,.csv";
 const layerOptions = ["A", "B", "C", "D", "E", "F"];
 const naturalCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
 
@@ -128,6 +128,15 @@ function isEditableTarget(target: EventTarget | null) {
 function isImageFile(file: File) {
   const extension = file.name.split(".").pop()?.toLowerCase();
   return extension ? imageExtensions.has(extension) : false;
+}
+
+function isCsvFile(file: File) {
+  return file.name.toLowerCase().endsWith(".csv");
+}
+
+function pickCsvFile(files: File[], preferredName: string) {
+  const csvFiles = files.filter(isCsvFile).sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  return csvFiles.find((file) => file.name.toLowerCase() === preferredName) ?? csvFiles[0] ?? null;
 }
 
 function isTiffFile(file: File) {
@@ -736,7 +745,10 @@ export function LayoutRoughLabeler() {
   }
 
   async function handleDirectorySelect(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? [])
+    const selectedFiles = Array.from(event.target.files ?? []);
+    const csvFile = pickCsvFile(selectedFiles, "layout_rough.csv");
+    const importedAnnotations = csvFile ? annotationsFromCsv(await csvFile.text()) : [];
+    const files = selectedFiles
       .filter(isImageFile)
       .sort((a, b) => a.name.localeCompare(b.name, "ja"))
       .reverse();
@@ -767,15 +779,18 @@ export function LayoutRoughLabeler() {
 
     setImages(nextImages);
     setIndex(0);
-    setAnnotations([]);
+    setAnnotations(importedAnnotations);
     setDraft(initialDraft);
     setSelectedId(null);
     setEditingId(null);
     setImageSize(null);
     setLocked(false);
+    if (nextImages.length > 0 && importedAnnotations.length > 0) {
+      loadImageAt(0, importedAnnotations, nextImages);
+    }
     setStatus(
       nextImages.length > 0
-        ? `${nextImages.length}件の画像を読み込みました。${failedTiffs.length ? ` TIFF変換失敗: ${failedTiffs.join(", ")}` : ""}`
+        ? `${nextImages.length}件の画像を読み込みました。${csvFile ? ` ${csvFile.name} から ${importedAnnotations.length}件のCSV行を読み込みました。` : ""}${failedTiffs.length ? ` TIFF変換失敗: ${failedTiffs.join(", ")}` : ""}`
         : "画像が見つかりませんでした。",
     );
     window.setTimeout(() => layerInputRef.current?.focus(), 0);

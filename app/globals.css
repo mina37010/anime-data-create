@@ -42,12 +42,12 @@ select:disabled {
 
 .primary-button {
   display: inline-flex;
-  min-height: 2.5rem;
+  min-height: 2.125rem;
   align-items: center;
   justify-content: center;
   border-radius: 0.375rem;
   background: #18181b;
-  padding: 0.5rem 0.875rem;
+  padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 700;
   color: #ffffff;
@@ -62,13 +62,13 @@ select:disabled {
 
 .control-button {
   display: inline-flex;
-  min-height: 2.5rem;
+  min-height: 2.125rem;
   align-items: center;
   justify-content: center;
   border: 1px solid #d4d4d8;
   border-radius: 0.375rem;
   background: #ffffff;
-  padding: 0.5rem 0.875rem;
+  padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 700;
   color: #27272a;
