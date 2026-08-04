@@ -24,4 +24,10 @@ export const apps: AppDefinition[] = [
     description: "画像とXLSXを読み込み、秒数・フレーム数・レイヤーを編集して書き出します。",
     status: "available",
   },
+  {
+    href: "/apps/iiif-manifest",
+    name: "背景IIIF Manifest作成",
+    description: "背景フォルダの画像を分類し、フォルダごとのIIIF manifestを生成します。",
+    status: "available",
+  },
 ];
