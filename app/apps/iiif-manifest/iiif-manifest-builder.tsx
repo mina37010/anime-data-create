@@ -10,6 +10,7 @@ const naturalCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "b
 
 type SemanticLabel = (typeof semanticLabels)[number];
 type LabelOverride = "auto" | "name" | SemanticLabel;
+type ManifestImageKind = SemanticLabel | "other";
 
 type ImageRecord = {
   id: string;
@@ -204,6 +205,28 @@ function labelMap(label: string) {
   return { ja: [label] };
 }
 
+function valueMap(value: string | string[]) {
+  return { none: Array.isArray(value) ? value : [value] };
+}
+
+function imageManifestLabel(kind: ManifestImageKind, image: ImageWithLabel, prefix?: string) {
+  const prefixText = prefix ? `${prefix}: ` : "";
+  return `${kind}: ${prefixText}${image.fileName}`;
+}
+
+function imageMetadata(kind: ManifestImageKind, image: ImageWithLabel) {
+  return [
+    {
+      label: labelMap("種別"),
+      value: valueMap(kind),
+    },
+    {
+      label: labelMap("ファイル名"),
+      value: valueMap(image.fileName),
+    },
+  ];
+}
+
 function compileRegexSettings(settings: RegexSettings): CompiledRegex[] {
   return semanticLabels.map((label) => {
     const pattern = settings[label].trim();
@@ -393,13 +416,14 @@ function sortImages<T extends { relativePath: string }>(images: T[]) {
   return [...images].sort((a, b) => naturalCollator.compare(a.relativePath, b.relativePath));
 }
 
-function bodyForImage(imageApiBaseUrl: string, image: ImageWithLabel, label: string) {
+function bodyForImage(imageApiBaseUrl: string, image: ImageWithLabel, kind: ManifestImageKind, prefix?: string) {
   const serviceId = iiifImageServiceId(imageApiBaseUrl, image);
   return {
     id: `${serviceId}/full/max/0/default.png`,
     type: "Image",
     format: "image/png",
-    label: labelMap(label),
+    label: labelMap(imageManifestLabel(kind, image, prefix)),
+    metadata: imageMetadata(kind, image),
     width: image.width,
     height: image.height,
     service: [
@@ -417,14 +441,14 @@ function annotationForImage(
   canvasId: string,
   image: ImageWithLabel,
   index: number,
-  pageKind: string,
+  pageKind: ManifestImageKind,
 ) {
   return {
     id: `${canvasId}/annotation/${pageKind}/${index + 1}`,
     type: "Annotation",
     motivation: "painting",
     ...(pageKind !== "background" ? { behavior: ["hidden"] } : {}),
-    body: bodyForImage(imageApiBaseUrl, image, image.displayLabel),
+    body: bodyForImage(imageApiBaseUrl, image, pageKind),
     target: canvasId,
   };
 }
@@ -449,7 +473,7 @@ function buildManifest(manifestBaseUrl: string, imageApiBaseUrl: string, folder:
   const manifestId = joinUrl(manifestBaseUrl, `${folder.key}/manifest.json`);
   const canvasId = joinUrl(manifestBaseUrl, `${folder.key}/canvas`);
   const backgroundChoiceItems = backgrounds.map((image, index) =>
-    bodyForImage(imageApiBaseUrl, image, `BG${index + 1}: ${stem(image.fileName)}`),
+    bodyForImage(imageApiBaseUrl, image, "background", `BG${index + 1}`),
   );
   const backgroundAnnotations =
     backgroundChoiceItems.length > 1
@@ -460,7 +484,6 @@ function buildManifest(manifestBaseUrl: string, imageApiBaseUrl: string, folder:
             motivation: "painting",
             body: {
               type: "Choice",
-              label: labelMap("背景"),
               items: backgroundChoiceItems,
             },
             target: canvasId,
