@@ -8,6 +8,7 @@
 - `/apps/keyframe/` - 原画キーフレーム入力
 - `/apps/layout-rough/` - レイアウト・ラフ原画入力
 - `/apps/timesheet/` - タイムシート入力
+- `/apps/iiif-manifest/` - 背景IIIF Manifest作成
 
 ## 原画キーフレーム入力
 
@@ -125,6 +126,40 @@ image_filename,layer,keyframe_number,x1,y1,x2,y2,paper_color,paper_color_other,l
 - 画像エリアのポップアップ表示、移動、拡大縮小、スクロール
 - 画像ポップアップ中・非表示中はセルエリアを全幅表示
 - 1行目からフレーム列・レイヤー名を並べた `.xlsx` 書き出し
+
+## 背景IIIF Manifest作成
+
+背景フォルダを読み込み、フォルダごとの IIIF Presentation 3 manifest を生成します。画像はすべて IIIF Image API 対応の画像として扱い、manifest には ImageService3 の `service` も出力します。
+
+入力:
+
+- `基底URL` - manifest、canvas、annotation の `id` に使うURL
+- `IIIF Image API URL` - 画像bodyの `id` と ImageService3 の `service.id` に使うURL
+- 背景フォルダ - フォルダ選択、または複数フォルダのドラッグ&ドロップで読み込み
+
+主な機能:
+
+- 複数フォルダをフォルダ単位で読み込み
+- 親フォルダを選んだ場合も、中の複数子フォルダをmanifest単位として扱う
+- `background`、`book`、`frame` の正規表現マッピング
+- `BG1` / `bg2`、`book1`、`_f` / `_f2` などの命名を初期設定で判定
+- 画像ごとのラベルを `自動`、`background`、`book`、`frame`、`画像名` から手動変更
+- フォルダごとの manifest ラベル編集
+- フォルダ別・画像別に分類結果を色付き表示
+- 1 Canvas にすべての画像annotationを入れる
+- background が複数ある場合は、background画像を Choice として出力
+- background 以外の annotation には `behavior: ["hidden"]` を付与
+- book / frame / その他は、該当画像がある場合だけmanifestに出力
+- サムネイルには background の1枚目を使用
+- 選択中フォルダの `manifest.json` 書き出し
+- 全件書き出しは `manifests.zip` として出力し、中に `フォルダ名/manifest.json` を作成
+
+出力される画像body:
+
+- `label` は `種別: ファイル名` 形式の人間向け表示文字列
+- `metadata` に `種別` と `ファイル名` を併記
+- `id` は `IIIF Image API URL!フォルダ!画像名/full/max/0/default.png` 形式
+- `service` は `type: "ImageService3"`、`profile: "level2"` で出力
 
 ## 開発
 
