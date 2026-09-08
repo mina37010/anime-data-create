@@ -30,4 +30,10 @@ export const apps: AppDefinition[] = [
     description: "背景フォルダの画像を分類し、フォルダごとのIIIF manifestを生成します。",
     status: "available",
   },
+  {
+    href: "/apps/cut-bag",
+    name: "カット袋入力",
+    description: "カット袋画像の領域を指定し、カット番号や担当者などの項目をCSV化します。",
+    status: "available",
+  },
 ];
