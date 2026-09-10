@@ -62,6 +62,22 @@ type Draft = {
   bbox: Bbox | null;
 };
 
+type StaffMember = {
+  id: string;
+  name: string;
+  affiliation: string;
+  roles: string[];
+};
+
+type StaffValueCandidate = {
+  id: string;
+  kind: "person" | "affiliation";
+  value: string;
+  name: string;
+  affiliation: string;
+  roles: string[];
+};
+
 const initialDraft: Draft = {
   propertyKey: "cut_number",
   value: "",
@@ -102,6 +118,136 @@ function fileDisplayName(file: File) {
 
 function propertyLabel(propertyKey: CutBagPropertyKey) {
   return cutBagProperties.find((property) => property.key === propertyKey)?.label ?? propertyKey;
+}
+
+function propertyShortcut(index: number) {
+  if (index < 9) {
+    return `Ctrl+${index + 1}`;
+  }
+  if (index === 9) {
+    return "Ctrl+0";
+  }
+  return null;
+}
+
+function propertyIndexFromShortcutKey(key: string) {
+  if (/^[1-9]$/.test(key)) {
+    return Number(key) - 1;
+  }
+  if (key === "0") {
+    return 9;
+  }
+  return null;
+}
+
+function isAnnotationCsvRows(rows: string[][]) {
+  const header = rows[0] ?? [];
+  return csvColumns.every((column) => header.includes(column));
+}
+
+function staffMembersFromCsv(text: string) {
+  const rows = parseCsv(text);
+  return rows.flatMap((row, rowIndex) => {
+    const name = row[0]?.trim() ?? "";
+    if (!name || ["name", "名前", "スタッフ名", "人物"].includes(name.toLowerCase())) {
+      return [];
+    }
+
+    const affiliation = row[1]?.trim() ?? "";
+    const roles = row.slice(2).map((value) => value.trim()).filter(Boolean);
+
+    return [
+      {
+        id: `${name}:${affiliation}:${rowIndex}`,
+        name,
+        affiliation,
+        roles,
+      },
+    ];
+  });
+}
+
+function roleKeywordsForProperty(propertyKey: CutBagPropertyKey) {
+  switch (propertyKey) {
+    case "key_animation_staff":
+      return ["原画"];
+    case "inbetween_staff":
+      return ["動画"];
+    case "animation_check_director":
+      return ["動画監督", "動画検査", "動画チェック"];
+    case "trace_staff":
+      return ["trace", "トレス"];
+    case "paint_staff":
+      return ["paint", "ペイント", "仕上"];
+    case "color_design_staff":
+      return ["色指定"];
+    case "special_effects_staff":
+      return ["特殊効果", "特効"];
+    case "three_d_staff":
+      return ["3d", "3D"];
+    case "finish_check_staff":
+      return ["仕上げ検査", "仕上検査", "仕上げチェック"];
+    case "compositing_staff":
+      return ["撮影"];
+    default:
+      return [];
+  }
+}
+
+function isStaffProperty(propertyKey: CutBagPropertyKey) {
+  return roleKeywordsForProperty(propertyKey).length > 0;
+}
+
+function staffMatchesProperty(staff: StaffMember, propertyKey: CutBagPropertyKey) {
+  const keywords = roleKeywordsForProperty(propertyKey).map((keyword) => keyword.toLowerCase());
+  if (keywords.length === 0) {
+    return true;
+  }
+  return staff.roles.some((role) => {
+    const normalizedRole = role.toLowerCase();
+    return keywords.some((keyword) => normalizedRole.includes(keyword));
+  });
+}
+
+function staffValueCandidatesForStaff(staff: StaffMember): StaffValueCandidate[] {
+  return [
+    {
+      id: `${staff.id}:person`,
+      kind: "person",
+      value: staff.name,
+      name: staff.name,
+      affiliation: staff.affiliation,
+      roles: staff.roles,
+    },
+    ...(staff.affiliation
+      ? [
+          {
+            id: `${staff.id}:affiliation`,
+            kind: "affiliation" as const,
+            value: staff.affiliation,
+            name: staff.name,
+            affiliation: staff.affiliation,
+            roles: staff.roles,
+          },
+        ]
+      : []),
+  ];
+}
+
+function normalizeCandidateText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function uniqueStaffValueCandidates(candidates: StaffValueCandidate[]) {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.kind}:${candidate.value}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeBbox(bbox: Bbox | null) {
@@ -280,6 +426,7 @@ function bboxStyle(bbox: Bbox, image: ImageEntry) {
 export function CutBagLabeler() {
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const staffCsvInputRef = useRef<HTMLInputElement | null>(null);
   const imageElementRef = useRef<HTMLImageElement | null>(null);
   const imagePanelRef = useRef<HTMLDivElement | null>(null);
   const imagesRef = useRef<ImageEntry[]>([]);
@@ -294,6 +441,7 @@ export function CutBagLabeler() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [zoom, setZoom] = useState(100);
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 });
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
 
   useEffect(() => {
     imagesRef.current = images;
@@ -326,6 +474,30 @@ export function CutBagLabeler() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.ctrlKey && !event.metaKey && !event.altKey) {
+        const directPropertyIndex = propertyIndexFromShortcutKey(event.key);
+        if (directPropertyIndex !== null && cutBagProperties[directPropertyIndex]) {
+          event.preventDefault();
+          const property = cutBagProperties[directPropertyIndex];
+          setDraft((previous) => ({ ...previous, propertyKey: property.key }));
+          setStatus(`${property.label} に切り替えました。`);
+          return;
+        }
+
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          event.preventDefault();
+          setDraft((previous) => {
+            const currentPropertyIndex = cutBagProperties.findIndex((property) => property.key === previous.propertyKey);
+            const direction = event.key === "ArrowDown" ? 1 : -1;
+            const nextIndex = (currentPropertyIndex + direction + cutBagProperties.length) % cutBagProperties.length;
+            const property = cutBagProperties[nextIndex];
+            setStatus(`${property.label} に切り替えました。`);
+            return { ...previous, propertyKey: property.key };
+          });
+          return;
+        }
+      }
+
       if (isEditableTarget(event.target)) {
         return;
       }
@@ -353,6 +525,28 @@ export function CutBagLabeler() {
   }, [annotations, currentImage]);
   const normalizedDraftBbox = normalizeBbox(draft.bbox);
   const canSave = Boolean(currentImage && normalizedDraftBbox && draft.value.trim());
+  const staffCandidates = useMemo(() => {
+    return staffMembers
+      .filter((staff) => staffMatchesProperty(staff, draft.propertyKey))
+      .sort((a, b) => naturalCollator.compare(a.name, b.name));
+  }, [draft.propertyKey, staffMembers]);
+  const staffValueCandidates = useMemo(() => {
+    const roleMatchedCandidates = uniqueStaffValueCandidates(staffCandidates.flatMap(staffValueCandidatesForStaff));
+    const allCandidates = uniqueStaffValueCandidates(
+      staffMembers
+        .flatMap(staffValueCandidatesForStaff)
+        .sort((a, b) => naturalCollator.compare(a.value, b.value)),
+    );
+
+    const input = normalizeCandidateText(draft.value);
+    if (!input) {
+      return roleMatchedCandidates;
+    }
+
+    return allCandidates.filter((candidate) => normalizeCandidateText(candidate.value).includes(input));
+  }, [draft.value, staffCandidates, staffMembers]);
+  const staffCandidateValues = useMemo(() => staffValueCandidates.map((candidate) => candidate.value), [staffValueCandidates]);
+  const shouldShowStaffCandidates = staffMembers.length > 0 && isStaffProperty(draft.propertyKey);
   const fitScale = currentImage
     ? Math.min(
         Math.max((panelSize.width - 24) / currentImage.width, 0.05),
@@ -364,7 +558,7 @@ export function CutBagLabeler() {
 
   async function loadFiles(files: File[]) {
     const imageFiles = files.filter(isImageFile).sort((a, b) => naturalCollator.compare(fileDisplayName(a), fileDisplayName(b)));
-    const csvFile = files.filter(isCsvFile).sort((a, b) => naturalCollator.compare(a.name, b.name))[0] ?? null;
+    const csvFiles = files.filter(isCsvFile).sort((a, b) => naturalCollator.compare(a.name, b.name));
 
     if (imageFiles.length === 0) {
       setStatus("画像ファイルが見つかりませんでした。");
@@ -393,15 +587,40 @@ export function CutBagLabeler() {
       setDraft(initialDraft);
       setSelectedId(null);
 
-      if (csvFile) {
+      let loadedAnnotations: Annotation[] | null = null;
+      let loadedStaffMembers: StaffMember[] | null = null;
+
+      for (const csvFile of csvFiles) {
         const csvText = await csvFile.text();
-        const loadedAnnotations = annotationsFromCsv(csvText);
+        const rows = parseCsv(csvText);
+        if (!loadedAnnotations && isAnnotationCsvRows(rows)) {
+          loadedAnnotations = annotationsFromCsv(csvText);
+          continue;
+        }
+        if (!loadedStaffMembers) {
+          const members = staffMembersFromCsv(csvText);
+          if (members.length > 0) {
+            loadedStaffMembers = members;
+          }
+        }
+      }
+
+      if (loadedAnnotations) {
         setAnnotations(loadedAnnotations);
-        setStatus(`${loadedImages.length} 画像と ${loadedAnnotations.length} 行のCSVを読み込みました。`);
       } else {
         setAnnotations([]);
-        setStatus(`${loadedImages.length} 画像を読み込みました。`);
       }
+      if (loadedStaffMembers) {
+        setStaffMembers(loadedStaffMembers);
+      }
+
+      const csvStatus = [
+        loadedAnnotations ? `${loadedAnnotations.length} 行の作業CSV` : null,
+        loadedStaffMembers ? `${loadedStaffMembers.length} 人のスタッフCSV` : null,
+      ]
+        .filter(Boolean)
+        .join(" / ");
+      setStatus(csvStatus ? `${loadedImages.length} 画像と ${csvStatus} を読み込みました。` : `${loadedImages.length} 画像を読み込みました。`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "画像の読み込みに失敗しました。");
     } finally {
@@ -424,6 +643,17 @@ export function CutBagLabeler() {
     setSelectedId(null);
     setDraft(initialDraft);
     setStatus(`${loadedAnnotations.length} 行のCSVを読み込みました。`);
+    event.target.value = "";
+  }
+
+  async function handleStaffCsvSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    const members = staffMembersFromCsv(await file.text());
+    setStaffMembers(members);
+    setStatus(`${members.length} 人のスタッフCSVを読み込みました。`);
     event.target.value = "";
   }
 
@@ -567,11 +797,21 @@ export function CutBagLabeler() {
             onChange={handleDirectorySelect}
           />
           <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvSelect} />
+          <input
+            ref={staffCsvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={handleStaffCsvSelect}
+          />
           <button className="primary-button" type="button" disabled={loading} onClick={() => directoryInputRef.current?.click()}>
             フォルダを読み込む
           </button>
           <button className="control-button" type="button" onClick={() => csvInputRef.current?.click()}>
             CSVを読み込む
+          </button>
+          <button className="control-button" type="button" onClick={() => staffCsvInputRef.current?.click()}>
+            スタッフCSV
           </button>
           <button className="control-button" type="button" disabled={annotations.length === 0} onClick={downloadCsv}>
             CSVを書き出す
@@ -677,6 +917,9 @@ export function CutBagLabeler() {
                 {cutBagProperties.map((property) => (
                   <option key={property.key} value={property.key}>
                     {property.label}
+                    {propertyShortcut(cutBagProperties.findIndex((item) => item.key === property.key))
+                      ? ` (${propertyShortcut(cutBagProperties.findIndex((item) => item.key === property.key))})`
+                      : ""}
                   </option>
                 ))}
               </select>
@@ -685,6 +928,7 @@ export function CutBagLabeler() {
               <span className="field-label">値</span>
               <input
                 className="field-control"
+                list={shouldShowStaffCandidates ? "cut-bag-staff-candidates" : undefined}
                 value={draft.value}
                 onChange={(event) => setDraft((previous) => ({ ...previous, value: event.target.value }))}
                 onKeyDown={(event) => {
@@ -695,6 +939,45 @@ export function CutBagLabeler() {
                 }}
               />
             </label>
+            <datalist id="cut-bag-staff-candidates">
+              {staffCandidateValues.map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+            {shouldShowStaffCandidates ? (
+              <div className="grid gap-1 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-zinc-600">スタッフ候補</span>
+                  <span className="text-xs text-zinc-500">{staffValueCandidates.length}件</span>
+                </div>
+                <div className="max-h-32 overflow-auto">
+                  {staffValueCandidates.length > 0 ? (
+                    staffValueCandidates.map((candidate) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        className="grid w-full gap-0.5 rounded px-2 py-1 text-left text-xs hover:bg-white"
+                        onClick={() => setDraft((previous) => ({ ...previous, value: candidate.value }))}
+                      >
+                        <span className="font-semibold text-zinc-900">
+                          {candidate.value}
+                          <span className="ml-1 rounded border border-zinc-200 bg-white px-1 py-0.5 text-[10px] text-zinc-500">
+                            {candidate.kind === "person" ? "人物" : "所属"}
+                          </span>
+                        </span>
+                        <span className="truncate text-zinc-500">
+                          {[candidate.kind === "person" ? candidate.affiliation : candidate.name, candidate.roles.join(" / ")]
+                            .filter(Boolean)
+                            .join(" / ")}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-2 py-1 text-xs text-zinc-500">この役職に一致するスタッフがいません。</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
             <p className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-600">
               領域:{" "}
               {normalizedDraftBbox
@@ -712,6 +995,9 @@ export function CutBagLabeler() {
             >
               削除
             </button>
+            <p className="text-xs leading-5 text-zinc-500">
+              Ctrl+1-0: 先頭10項目 / Ctrl+↑↓: プロパティ移動 / Ctrl+Enter: 保存 / ←→: 画像移動
+            </p>
           </div>
         </section>
 
