@@ -36,4 +36,10 @@ export const apps: AppDefinition[] = [
     description: "カット袋画像の領域を指定し、カット番号や担当者などの項目をCSV化します。",
     status: "available",
   },
+  {
+    href: "/apps/model-sheet",
+    name: "モデルシートメタデータ入力",
+    description: "モデルシート画像ごとに対象名、種別、資料内容、制作状態などをCSV化します。",
+    status: "available",
+  },
 ];
