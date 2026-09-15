@@ -703,7 +703,7 @@ export function KeyframeLabeler() {
       }
       if (event.key === "Enter" && currentImage && !locked) {
         event.preventDefault();
-        saveDraft("next");
+        saveDraft("stay");
       }
       if (key === "n" && currentImage) {
         event.preventDefault();
@@ -1511,7 +1511,7 @@ export function KeyframeLabeler() {
                   onChange={(event) => setDraft((previous) => ({ ...previous, keyframeNumber: event.target.value }))}
                   onKeyDown={(event) => {
                     if (event.ctrlKey && !event.metaKey && event.key === "Enter" && canSave) {
-                      saveDraft("next");
+                      saveDraft("stay");
                     }
                   }}
                 />
