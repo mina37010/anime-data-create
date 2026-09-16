@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, ChangeEvent, Fragment, KeyboardEvent, PointerEvent, useMemo, useRef, useState } from "react";
+import { CSSProperties, ChangeEvent, ClipboardEvent, Fragment, KeyboardEvent, PointerEvent, useMemo, useRef, useState } from "react";
 import * as UTIF from "utif";
 import * as XLSX from "xlsx";
 
@@ -60,6 +60,13 @@ type TimesheetCellCoordinate = {
 type CellSelection = {
   anchor: TimesheetCellCoordinate;
   focus: TimesheetCellCoordinate;
+};
+
+type CellSelectionBounds = {
+  rowStart: number;
+  rowEnd: number;
+  colStart: number;
+  colEnd: number;
 };
 
 type RepeatDirective = {
@@ -623,6 +630,7 @@ export function TimesheetEditor() {
   const [textNotes, setTextNotes] = useState("");
   const [status, setStatus] = useState("タイムシート入力アプリのフォルダを読み込んでください。");
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const skipCellFocusSelectionRef = useRef(false);
 
   const selectedImages = useMemo(() => images.filter((image) => image.selected), [images]);
   const layerOptions = useMemo(
@@ -703,20 +711,68 @@ export function TimesheetEditor() {
     return sectionId === "genga" ? layerIndex : baseGengaLayerCount + 1 + layerIndex;
   }
 
+  function cellFromColumnIndex(rowIndex: number, colIndex: number, baseGengaLayerCount = gengaLayerCount): TimesheetCellCoordinate | null {
+    const syncedTimesheet = synchronizeLayerNames(timesheet);
+    const gengaSection = syncedTimesheet.sections.find((section) => section.id === "genga");
+    const dougaSection = syncedTimesheet.sections.find((section) => section.id === "douga");
+    if (colIndex < 0 || rowIndex < 0 || rowIndex >= syncedTimesheet.frameCount) {
+      return null;
+    }
+    if (colIndex < baseGengaLayerCount && gengaSection?.layers[colIndex]) {
+      return { rowIndex, colIndex, sectionId: "genga", layerIndex: colIndex };
+    }
+    const dougaLayerIndex = colIndex - baseGengaLayerCount - 1;
+    if (dougaLayerIndex >= 0 && dougaSection?.layers[dougaLayerIndex]) {
+      return { rowIndex, colIndex, sectionId: "douga", layerIndex: dougaLayerIndex };
+    }
+    return null;
+  }
+
+  function selectionBounds(selection: CellSelection): CellSelectionBounds {
+    return {
+      rowStart: Math.min(selection.anchor.rowIndex, selection.focus.rowIndex),
+      rowEnd: Math.max(selection.anchor.rowIndex, selection.focus.rowIndex),
+      colStart: Math.min(selection.anchor.colIndex, selection.focus.colIndex),
+      colEnd: Math.max(selection.anchor.colIndex, selection.focus.colIndex),
+    };
+  }
+
+  function focusCell(rowIndex: number, colIndex: number) {
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>(
+        `[data-timesheet-cell="true"][data-row-index="${rowIndex}"][data-col-index="${colIndex}"]`,
+      );
+      skipCellFocusSelectionRef.current = true;
+      input?.focus();
+      input?.select();
+      window.requestAnimationFrame(() => {
+        skipCellFocusSelectionRef.current = false;
+      });
+    });
+  }
+
   function isCellSelected(rowIndex: number, colIndex: number) {
     if (!cellSelection) {
       return false;
     }
-    const rowStart = Math.min(cellSelection.anchor.rowIndex, cellSelection.focus.rowIndex);
-    const rowEnd = Math.max(cellSelection.anchor.rowIndex, cellSelection.focus.rowIndex);
-    const colStart = Math.min(cellSelection.anchor.colIndex, cellSelection.focus.colIndex);
-    const colEnd = Math.max(cellSelection.anchor.colIndex, cellSelection.focus.colIndex);
+    const { rowStart, rowEnd, colStart, colEnd } = selectionBounds(cellSelection);
     return rowIndex >= rowStart && rowIndex <= rowEnd && colIndex >= colStart && colIndex <= colEnd;
   }
 
-  function beginCellSelection(cell: TimesheetCellCoordinate) {
+  function selectSingleCell(cell: TimesheetCellCoordinate) {
     setCellSelection({ anchor: cell, focus: cell });
+  }
+
+  function beginCellSelection(cell: TimesheetCellCoordinate) {
+    selectSingleCell(cell);
     setCellSelectionActive(true);
+  }
+
+  function handleCellFocus(cell: TimesheetCellCoordinate) {
+    if (skipCellFocusSelectionRef.current) {
+      return;
+    }
+    selectSingleCell(cell);
   }
 
   function extendCellSelection(cell: TimesheetCellCoordinate) {
@@ -724,6 +780,73 @@ export function TimesheetEditor() {
       return;
     }
     setCellSelection((previous) => (previous ? { ...previous, focus: cell } : { anchor: cell, focus: cell }));
+  }
+
+  function cellValueAt(data: TimesheetData, rowIndex: number, colIndex: number, baseGengaLayerCount = gengaLayerCount) {
+    if (colIndex < baseGengaLayerCount) {
+      return data.sections.find((section) => section.id === "genga")?.cells[rowIndex]?.[colIndex] ?? "";
+    }
+    const dougaLayerIndex = colIndex - baseGengaLayerCount - 1;
+    if (dougaLayerIndex >= 0) {
+      return data.sections.find((section) => section.id === "douga")?.cells[rowIndex]?.[dougaLayerIndex] ?? "";
+    }
+    return "";
+  }
+
+  function serializeSelectedCells() {
+    if (!cellSelection) {
+      return "";
+    }
+    const { rowStart, rowEnd, colStart, colEnd } = selectionBounds(cellSelection);
+    return Array.from({ length: rowEnd - rowStart + 1 }, (_, rowOffset) =>
+      Array.from({ length: colEnd - colStart + 1 }, (_, colOffset) =>
+        cellValueAt(timesheet, rowStart + rowOffset, colStart + colOffset),
+      ).join("\t"),
+    ).join("\n");
+  }
+
+  function pasteCellsFromText(text: string) {
+    if (!cellSelection || text.length === 0) {
+      return;
+    }
+    const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const rows = normalizedText.split("\n");
+    if (rows.at(-1) === "") {
+      rows.pop();
+    }
+    const pastedRows = rows.map((row) => row.split("\t"));
+    if (pastedRows.length === 0) {
+      return;
+    }
+
+    const { rowStart, colStart } = selectionBounds(cellSelection);
+    setTimesheet((previous) => {
+      const previousGengaLayerCount = previous.sections.find((section) => section.id === "genga")?.layers.length ?? 0;
+      return {
+        ...previous,
+        sections: previous.sections.map((section) => ({
+          ...section,
+          cells: section.cells.map((row, rowIndex) =>
+            row.map((cell, layerIndex) => {
+              const colIndex = cellColumnIndex(section.id, layerIndex, previousGengaLayerCount);
+              const pasteRow = rowIndex - rowStart;
+              const pasteCol = colIndex - colStart;
+              return pastedRows[pasteRow]?.[pasteCol] ?? cell;
+            }),
+          ),
+        })),
+      };
+    });
+
+    const lastRow = Math.min(timesheet.frameCount - 1, rowStart + pastedRows.length - 1);
+    const lastCol = colStart + Math.max(...pastedRows.map((row) => row.length)) - 1;
+    const startCell = cellFromColumnIndex(rowStart, colStart);
+    const focusCellTarget = cellFromColumnIndex(lastRow, lastCol) ?? cellFromColumnIndex(rowStart, colStart);
+    if (startCell && focusCellTarget) {
+      setCellSelection({ anchor: startCell, focus: focusCellTarget });
+      focusCell(focusCellTarget.rowIndex, focusCellTarget.colIndex);
+    }
+    setStatus(`${pastedRows.length}行を貼り付けました。`);
   }
 
   function clearSelectedCells() {
@@ -734,10 +857,7 @@ export function TimesheetEditor() {
     const selection = cellSelection;
     setTimesheet((previous) => {
       const previousGengaLayerCount = previous.sections.find((section) => section.id === "genga")?.layers.length ?? 0;
-      const rowStart = Math.min(selection.anchor.rowIndex, selection.focus.rowIndex);
-      const rowEnd = Math.max(selection.anchor.rowIndex, selection.focus.rowIndex);
-      const colStart = Math.min(selection.anchor.colIndex, selection.focus.colIndex);
-      const colEnd = Math.max(selection.anchor.colIndex, selection.focus.colIndex);
+      const { rowStart, rowEnd, colStart, colEnd } = selectionBounds(selection);
 
       return {
         ...previous,
@@ -755,7 +875,60 @@ export function TimesheetEditor() {
     setStatus("選択範囲のセルを削除しました。");
   }
 
+  function moveCellSelection(direction: "up" | "down" | "left" | "right", extend: boolean) {
+    if (!cellSelection) {
+      return;
+    }
+    const current = cellSelection.focus;
+    const maxColIndex = gengaLayerCount * 2;
+    let nextRowIndex = current.rowIndex;
+    let nextColIndex = current.colIndex;
+
+    if (direction === "up") {
+      nextRowIndex -= 1;
+    }
+    if (direction === "down") {
+      nextRowIndex += 1;
+    }
+    if (direction === "left") {
+      nextColIndex -= current.colIndex === gengaLayerCount + 1 ? 2 : 1;
+    }
+    if (direction === "right") {
+      nextColIndex += current.colIndex === gengaLayerCount - 1 ? 2 : 1;
+    }
+
+    nextRowIndex = Math.min(Math.max(0, nextRowIndex), Math.max(0, timesheet.frameCount - 1));
+    nextColIndex = Math.min(Math.max(0, nextColIndex), maxColIndex);
+    const nextCell = cellFromColumnIndex(nextRowIndex, nextColIndex);
+    if (!nextCell) {
+      return;
+    }
+
+    setCellSelection((previous) => {
+      const anchor = extend ? previous?.anchor ?? current : nextCell;
+      return { anchor, focus: nextCell };
+    });
+    focusCell(nextCell.rowIndex, nextCell.colIndex);
+  }
+
   function handleTimesheetKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!cellSelection) {
+      return;
+    }
+
+    const arrowDirectionByKey: Record<string, "up" | "down" | "left" | "right" | undefined> = {
+      ArrowUp: "up",
+      ArrowDown: "down",
+      ArrowLeft: "left",
+      ArrowRight: "right",
+    };
+    const arrowDirection = arrowDirectionByKey[event.key];
+    if (arrowDirection) {
+      event.preventDefault();
+      moveCellSelection(arrowDirection, event.shiftKey);
+      return;
+    }
+
     if ((event.key !== "Delete" && event.key !== "Backspace") || !cellSelection) {
       return;
     }
@@ -767,6 +940,43 @@ export function TimesheetEditor() {
 
     event.preventDefault();
     clearSelectedCells();
+  }
+
+  function handleTimesheetCopy(event: ClipboardEvent<HTMLElement>) {
+    if (!cellSelection) {
+      return;
+    }
+    const target = event.target;
+    const hasTextSelection =
+      target instanceof HTMLInputElement &&
+      target.selectionStart !== null &&
+      target.selectionEnd !== null &&
+      target.selectionStart !== target.selectionEnd &&
+      selectedCellCount <= 1;
+    if (hasTextSelection) {
+      return;
+    }
+    const text = serializeSelectedCells();
+    if (!text) {
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+    setStatus(`${selectedCellCount}セルをコピーしました。`);
+  }
+
+  function handleTimesheetPaste(event: ClipboardEvent<HTMLElement>) {
+    if (!cellSelection) {
+      return;
+    }
+    const text = event.clipboardData.getData("text/plain");
+    const target = event.target;
+    const shouldUseNativePaste = target instanceof HTMLInputElement && selectedCellCount <= 1 && !/[\t\r\n]/.test(text);
+    if (shouldUseNativePaste) {
+      return;
+    }
+    event.preventDefault();
+    pasteCellsFromText(text);
   }
 
   function updateLayerName(layerIndex: number, value: string) {
@@ -1100,6 +1310,8 @@ export function TimesheetEditor() {
           className="min-h-0 flex-1 overflow-auto rounded border border-zinc-200"
           tabIndex={0}
           onKeyDown={handleTimesheetKeyDown}
+          onCopy={handleTimesheetCopy}
+          onPaste={handleTimesheetPaste}
           onPointerUp={() => setCellSelectionActive(false)}
           onPointerCancel={() => setCellSelectionActive(false)}
         >
@@ -1199,6 +1411,8 @@ export function TimesheetEditor() {
                               maxLength={6}
                               value={section.cells[rowIndex]?.[layerIndex] ?? ""}
                               onCommit={(value) => updateCell(section.id, rowIndex, layerIndex, value)}
+                              cellCoordinate={cell}
+                              onFocusCell={handleCellFocus}
                             />
                           </td>
                         );
@@ -1262,12 +1476,16 @@ function CommitInput({
   style,
   maxLength,
   onCommit,
+  cellCoordinate,
+  onFocusCell,
 }: {
   value: string;
   className: string;
   style?: CSSProperties;
   maxLength?: number;
   onCommit: (value: string) => void;
+  cellCoordinate?: TimesheetCellCoordinate;
+  onFocusCell?: (cell: TimesheetCellCoordinate) => void;
 }) {
   const [draft, setDraft] = useState(value);
   const skipBlurCommitRef = useRef(false);
@@ -1307,7 +1525,15 @@ function CommitInput({
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={handleBlur}
+      onFocus={() => {
+        if (cellCoordinate) {
+          onFocusCell?.(cellCoordinate);
+        }
+      }}
       onKeyDown={handleKeyDown}
+      data-timesheet-cell={cellCoordinate ? "true" : undefined}
+      data-row-index={cellCoordinate?.rowIndex}
+      data-col-index={cellCoordinate?.colIndex}
     />
   );
 }

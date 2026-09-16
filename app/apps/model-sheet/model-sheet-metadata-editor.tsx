@@ -82,6 +82,21 @@ function csvEscape(value: string | number) {
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function splitMultiValue(value: string) {
+  return value
+    .split(/[;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function displayMultiValue(value: string) {
+  return splitMultiValue(value).join("\n");
+}
+
+function csvMultiValue(value: string) {
+  return splitMultiValue(value).join(";");
+}
+
 function parseCsv(text: string) {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -193,7 +208,7 @@ function readMetadataCsv(text: string) {
     }
     nextCollectionTitle ||= row[indexes.collection_title] ?? "";
     nextMetadata[imageFilename] = {
-      targetName: row[indexes.target_name] ?? "",
+      targetName: displayMultiValue(row[indexes.target_name] ?? ""),
       targetType: row[indexes.target_type] ?? "",
       subTargetVariation: row[indexes.sub_target_variation] ?? "",
       materialContent: row[indexes.material_content] ?? "",
@@ -234,7 +249,7 @@ function generatedCollectionTitle(images: ImageEntry[], metadataByImage: Metadat
     return "";
   }
 
-  const targetNames = frequentValues(metadataList.map((metadata) => metadata.targetName), 3);
+  const targetNames = frequentValues(metadataList.flatMap((metadata) => splitMultiValue(metadata.targetName)), 3);
   const targetTypes = frequentValues(metadataList.map((metadata) => metadata.targetType), 2);
   const variations = frequentValues(metadataList.map((metadata) => metadata.subTargetVariation), 2);
   const materialContents = frequentValues(metadataList.map((metadata) => metadata.materialContent), 3);
@@ -408,7 +423,7 @@ export function ModelSheetMetadataEditor() {
         return [
           effectiveCollectionTitle,
           image.name,
-          metadata.targetName,
+          csvMultiValue(metadata.targetName),
           metadata.targetType,
           metadata.subTargetVariation,
           metadata.materialContent,
@@ -544,13 +559,14 @@ export function ModelSheetMetadataEditor() {
           <div className="grid gap-2">
             <label className="grid gap-1">
               <span className="field-label">対象名</span>
-              <input
-                className="field-control"
+              <textarea
+                className="field-control h-20 resize-y"
                 value={currentMetadata.targetName}
                 disabled={!currentImage}
-                placeholder="風見あつこ、ロッテ、新月の塔、ドラゴン"
+                placeholder={"風見あつこ\nロッテ\n新月の塔"}
                 onChange={(event) => updateCurrentMetadata("targetName", event.target.value)}
               />
+              <span className="text-xs leading-5 text-zinc-500">1行に1対象。CSVでは ; 区切りで保存します。</span>
             </label>
             <label className="grid gap-1">
               <span className="field-label">対象種別</span>
@@ -615,7 +631,7 @@ export function ModelSheetMetadataEditor() {
                   className="field-control"
                   value={currentMetadata.sheetNumber}
                   disabled={!currentImage}
-                  placeholder="カガリ1、カガリ2、1、2、3、4"
+                  placeholder="1、2、3、4"
                   onChange={(event) => updateCurrentMetadata("sheetNumber", event.target.value)}
                 />
               </label>
@@ -663,6 +679,7 @@ export function ModelSheetMetadataEditor() {
             {images.length > 0 ? (
               images.map((image, index) => {
                 const metadata = metadataForImage(metadataByImage, image.name);
+                const targetNameSummary = splitMultiValue(metadata.targetName).join("・");
                 return (
                   <button
                     key={image.name}
@@ -675,7 +692,7 @@ export function ModelSheetMetadataEditor() {
                     <span className="truncate font-semibold text-zinc-900">{image.name}</span>
                     <span className="truncate text-zinc-600">
                       {metadataIsFilled(metadata)
-                        ? [metadata.targetName, metadata.targetType, metadata.subTargetVariation, metadata.materialContent]
+                        ? [targetNameSummary, metadata.targetType, metadata.subTargetVariation, metadata.materialContent]
                             .filter(Boolean)
                             .join(" / ")
                         : "未入力"}
