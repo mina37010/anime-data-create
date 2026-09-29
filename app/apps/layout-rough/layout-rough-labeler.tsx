@@ -1563,8 +1563,8 @@ export function LayoutRoughLabeler() {
                   編集する
                 </button>
               ) : (
-                <button className="primary-button" type="button" onClick={() => saveDraft("next")} disabled={!canSave}>
-                  保存して次へ
+                <button className="primary-button" type="button" onClick={() => saveDraft("stay")} disabled={!canSave}>
+                  保存する
                 </button>
               )}
               <div className="grid grid-cols-2 gap-2">
