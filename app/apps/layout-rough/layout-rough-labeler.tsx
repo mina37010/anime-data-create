@@ -20,6 +20,7 @@ const csvColumns = [
   "correction_rough_keyframe_flag",
   "reference_flag",
   "book_flag",
+  "assembly_instruction_flag",
   "blank_paper_flag",
   "composite_instruction_flag",
   "material_type",
@@ -83,6 +84,7 @@ type MaterialMark =
   | "correction_rough_keyframe"
   | "reference"
   | "book"
+  | "assembly_instruction"
   | "blank_paper";
 type PaperColor = "none" | "white" | "pink" | "yellow" | "other";
 
@@ -267,6 +269,9 @@ function classificationLabel(classification: Classification) {
   if (classification.kind === "book") {
     return "Book";
   }
+  if (classification.kind === "assembly_instruction") {
+    return "組み指示";
+  }
   return "白紙";
 }
 
@@ -275,7 +280,12 @@ function materialTypeLabel(classification: Classification) {
 }
 
 function timelineRowLabel(annotation: Annotation, classification: Classification) {
-  if (annotation.compositeInstructionFlag || classification.kind === "blank_paper" || classification.kind === "book") {
+  if (
+    annotation.compositeInstructionFlag ||
+    classification.kind === "blank_paper" ||
+    classification.kind === "book" ||
+    classification.kind === "assembly_instruction"
+  ) {
     return "その他";
   }
 
@@ -427,6 +437,9 @@ function materialMarkFromCsv(values: Map<string, string>): MaterialMark {
   if (classification === "book" || materialType === "Book") {
     return "book";
   }
+  if (classification === "assembly_instruction" || materialType === "組み指示") {
+    return "assembly_instruction";
+  }
   if (classification === "blank_paper" || materialType === "白紙") {
     return "blank_paper";
   }
@@ -444,6 +457,9 @@ function materialMarkFromCsv(values: Map<string, string>): MaterialMark {
   }
   if (isFlagOn(values.get("book_flag"))) {
     return "book";
+  }
+  if (isFlagOn(values.get("assembly_instruction_flag"))) {
+    return "assembly_instruction";
   }
   if (isFlagOn(values.get("blank_paper_flag"))) {
     return "blank_paper";
@@ -465,7 +481,8 @@ function annotationsFromCsv(text: string): Annotation[] {
     const keyframeNumber = values.get("keyframe_number")?.trim() ?? "";
     const coloredPaperFlag = isFlagOn(values.get("colored_paper_flag"));
     const materialMark = materialMarkFromCsv(values);
-    const canOmitTimelinePosition = materialMark === "book" || materialMark === "blank_paper";
+    const canOmitTimelinePosition =
+      materialMark === "book" || materialMark === "assembly_instruction" || materialMark === "blank_paper";
     const compositeInstructionFlag = isFlagOn(values.get("composite_instruction_flag"));
 
     if (!imageFilename || (!canOmitTimelinePosition && (!layer || !keyframeNumber))) {
@@ -522,6 +539,7 @@ function annotationsToCsv(annotations: Annotation[]) {
         classification.kind === "correction_rough_keyframe" ? "1" : "0",
         classification.kind === "reference" ? "1" : "0",
         classification.kind === "book" ? "1" : "0",
+        classification.kind === "assembly_instruction" ? "1" : "0",
         classification.kind === "blank_paper" ? "1" : "0",
         annotation.compositeInstructionFlag ? "1" : "0",
         materialTypeLabel(classification),
@@ -634,6 +652,10 @@ export function LayoutRoughLabeler() {
       if (key === "7" && !locked) {
         event.preventDefault();
         updateMaterialMark("blank_paper");
+      }
+      if (key === "k" && !locked) {
+        event.preventDefault();
+        updateMaterialMark("assembly_instruction");
       }
       if (key === "8" && !locked) {
         event.preventDefault();
@@ -841,7 +863,8 @@ export function LayoutRoughLabeler() {
 
     const layer = getLayerValue();
     const keyframeNumber = draft.keyframeNumber.trim();
-    const canOmitTimelinePosition = draft.materialMark === "book" || draft.materialMark === "blank_paper";
+    const canOmitTimelinePosition =
+      draft.materialMark === "book" || draft.materialMark === "assembly_instruction" || draft.materialMark === "blank_paper";
     if (!canOmitTimelinePosition && !layer) {
       setStatus("レイヤーを選択または入力してください。");
       return null;
@@ -1446,6 +1469,7 @@ export function LayoutRoughLabeler() {
                   ["correction_rough_keyframe", "修正ラフ原画", "Ctrl+4"],
                   ["reference", "参考", "Ctrl+5"],
                   ["book", "Book", "Ctrl+6"],
+                  ["assembly_instruction", "組み指示", "Ctrl+K"],
                   ["blank_paper", "白紙", "Ctrl+7"],
                 ].map(([value, label, shortcut]) => (
                   <label
@@ -1558,7 +1582,7 @@ export function LayoutRoughLabeler() {
               </div>
             </div>
             <p className="text-xs leading-5 text-zinc-500">
-              Ctrl: I画像 / O読込 / Enter保存 / 1レイアウト / 2修正レイアウト / 3ラフ原画 / 4修正ラフ / 5参考 / 6Book / 7白紙 / 8白 / 9桃 / 0黄 / -他色 / Q合成
+              Ctrl: I画像 / O読込 / Enter保存 / 1レイアウト / 2修正レイアウト / 3ラフ原画 / 4修正ラフ / 5参考 / 6Book / 7白紙 / K組み指示 / 8白 / 9桃 / 0黄 / -他色 / Q合成
             </p>
           </div>
         </section>
