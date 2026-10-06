@@ -41,6 +41,8 @@ type ImageEntry = {
   file: File;
   name: string;
   url: string;
+  width: number;
+  height: number;
 };
 
 type Annotation = {
@@ -184,6 +186,32 @@ async function previewUrlForImage(file: File) {
       resolve(URL.createObjectURL(blob));
     }, "image/png");
   });
+}
+
+function preloadImage(url: string) {
+  return new Promise<ImageSize>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        reject(new Error("プレビュー画像のサイズを取得できませんでした。"));
+        return;
+      }
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => reject(new Error("プレビュー画像を読み込めませんでした。"));
+    image.src = url;
+  });
+}
+
+async function imageEntryForFile(file: File): Promise<ImageEntry> {
+  const url = await previewUrlForImage(file);
+  try {
+    const size = await preloadImage(url);
+    return { file, name: file.name, url, ...size };
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 }
 
 function normalizeBbox(bbox: Bbox | null) {
@@ -583,6 +611,9 @@ export function LayoutRoughLabeler() {
   const [status, setStatus] = useState("ローカル画像フォルダを読み込んでください。画像はサーバーへ送信されません。");
   const [mainView, setMainView] = useState<"image" | "timeline">("image");
   const [csvFilenamePrefix, setCsvFilenamePrefix] = useState("");
+  const [imageZoom, setImageZoom] = useState(100);
+  const [imageZoomEnabled, setImageZoomEnabled] = useState(false);
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
 
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
@@ -590,6 +621,7 @@ export function LayoutRoughLabeler() {
   const keyframeInputRef = useRef<HTMLInputElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
 
   const currentImage = images[index] ?? null;
   const currentAnnotations = useMemo(
@@ -609,6 +641,26 @@ export function LayoutRoughLabeler() {
       }
     };
   }, [images]);
+
+  useEffect(() => {
+    if (mainView !== "image") {
+      return;
+    }
+
+    const preview = previewRef.current;
+    if (!preview) {
+      return;
+    }
+
+    const updatePreviewSize = () => {
+      setPreviewSize({ width: preview.clientWidth, height: preview.clientHeight });
+    };
+    updatePreviewSize();
+
+    const resizeObserver = new ResizeObserver(updatePreviewSize);
+    resizeObserver.observe(preview);
+    return () => resizeObserver.disconnect();
+  }, [mainView]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -723,7 +775,9 @@ export function LayoutRoughLabeler() {
   function loadImageAt(nextIndex: number, sourceAnnotations = annotations, sourceImages = images) {
     const nextImage = sourceImages[nextIndex];
     setIndex(nextIndex);
-    setImageSize(null);
+    setImageSize(nextImage ? { width: nextImage.width, height: nextImage.height } : null);
+    setImageZoom(100);
+    setImageZoomEnabled(false);
     setSelectedId(null);
     setEditingId(null);
     setDragStart(null);
@@ -784,11 +838,7 @@ export function LayoutRoughLabeler() {
       await Promise.all(
         files.map(async (file) => {
           try {
-            return {
-              file,
-              name: file.name,
-              url: await previewUrlForImage(file),
-            };
+            return await imageEntryForFile(file);
           } catch (error) {
             if (isTiffFile(file)) {
               failedTiffs.push(file.name);
@@ -810,7 +860,9 @@ export function LayoutRoughLabeler() {
     setDraft(initialDraft);
     setSelectedId(null);
     setEditingId(null);
-    setImageSize(null);
+    setImageSize(nextImages[0] ? { width: nextImages[0].width, height: nextImages[0].height } : null);
+    setImageZoom(100);
+    setImageZoomEnabled(false);
     setLocked(false);
     if (nextImages.length > 0 && importedAnnotations.length > 0) {
       loadImageAt(0, importedAnnotations, nextImages);
@@ -1003,8 +1055,11 @@ export function LayoutRoughLabeler() {
   function openTimelineAnnotation(annotation: Annotation) {
     const nextIndex = images.findIndex((image) => image.name === annotation.imageFilename);
     if (nextIndex >= 0) {
+      const nextImage = images[nextIndex];
       setIndex(nextIndex);
-      setImageSize(null);
+      setImageSize(nextImage ? { width: nextImage.width, height: nextImage.height } : null);
+      setImageZoom(100);
+      setImageZoomEnabled(false);
       setDragStart(null);
     }
     setLocked(true);
@@ -1168,6 +1223,14 @@ export function LayoutRoughLabeler() {
     : null;
   const draftClassification: Classification = draftAnnotation ? classifyAnnotation(draftAnnotation) : { kind: "layout", source: "explicit" };
   const materialMark = materialMarkFromDraft(draft);
+  const imageFitScale = imageSize
+    ? Math.min(
+        Math.max((previewSize.width - 16) / imageSize.width, 0.01),
+        Math.max((previewSize.height - 16) / imageSize.height, 0.01),
+        1,
+      )
+    : 1;
+  const imageDisplayScale = imageFitScale * ((imageZoomEnabled ? imageZoom : 100) / 100);
 
   return (
     <div className="grid gap-3 lg:h-[calc(100vh-92px)] lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden">
@@ -1191,42 +1254,110 @@ export function LayoutRoughLabeler() {
           </div>
         </div>
 
-        <div className="mb-2 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            className={classNames("control-button", mainView === "image" && "border-zinc-900 bg-zinc-100")}
-            onClick={() => setMainView("image")}
-          >
-            画像
-          </button>
-          <button
-            type="button"
-            className={classNames("control-button", mainView === "timeline" && "border-zinc-900 bg-zinc-100")}
-            onClick={() => setMainView("timeline")}
-          >
-            タイムライン
-          </button>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="grid min-w-64 flex-1 grid-cols-2 gap-2">
+            <button
+              type="button"
+              className={classNames("control-button", mainView === "image" && "border-zinc-900 bg-zinc-100")}
+              onClick={() => {
+                setMainView("image");
+                setImageZoom(100);
+                setImageZoomEnabled(false);
+              }}
+            >
+              画像
+            </button>
+            <button
+              type="button"
+              className={classNames("control-button", mainView === "timeline" && "border-zinc-900 bg-zinc-100")}
+              onClick={() => setMainView("timeline")}
+            >
+              タイムライン
+            </button>
+          </div>
+          {mainView === "image" ? (
+            imageZoomEnabled ? (
+              <div className="flex items-center gap-1 text-xs text-zinc-600">
+                <button
+                  className="control-button min-h-8 w-8 px-0 py-1"
+                  type="button"
+                  title="縮小"
+                  onClick={() => setImageZoom((zoom) => Math.max(25, zoom - 25))}
+                >
+                  −
+                </button>
+                <input
+                  type="range"
+                  min="25"
+                  max="800"
+                  step="25"
+                  value={imageZoom}
+                  aria-label="画像の拡大率"
+                  className="w-28"
+                  onChange={(event) => setImageZoom(Number(event.target.value))}
+                />
+                <span className="w-12 text-right tabular-nums">{imageZoom}%</span>
+                <button
+                  className="control-button min-h-8 w-8 px-0 py-1"
+                  type="button"
+                  title="拡大"
+                  onClick={() => setImageZoom((zoom) => Math.min(800, zoom + 25))}
+                >
+                  +
+                </button>
+                <button
+                  className="control-button min-h-8 px-2 py-1"
+                  type="button"
+                  onClick={() => {
+                    setImageZoom(100);
+                    setImageZoomEnabled(false);
+                  }}
+                >
+                  全体固定
+                </button>
+              </div>
+            ) : (
+              <button
+                className="control-button min-h-8 px-3 py-1"
+                type="button"
+                onClick={() => setImageZoomEnabled(true)}
+              >
+                拡大
+              </button>
+            )
+          ) : null}
         </div>
 
         {mainView === "image" ? (
           <>
-            <div className="flex min-h-[360px] flex-1 items-center justify-center overflow-hidden rounded-md bg-zinc-950 lg:h-[calc(100vh-220px)] lg:min-h-0">
+            <div
+              ref={previewRef}
+              className="min-h-[360px] flex-1 overflow-auto rounded-md bg-zinc-950 lg:h-[calc(100vh-220px)] lg:min-h-0"
+            >
               {currentImage ? (
-                <div className="relative inline-flex max-h-[70vh] max-w-full lg:max-h-[calc(100vh-220px)]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={currentImage.url}
-                    alt={currentImage.name}
-                    className="block max-h-[70vh] max-w-full select-none object-contain lg:max-h-[calc(100vh-220px)]"
-                    draggable={false}
-                    onLoad={(event) =>
-                      setImageSize({
-                        width: event.currentTarget.naturalWidth,
-                        height: event.currentTarget.naturalHeight,
-                      })
+                <div
+                  className="flex min-h-full min-w-full items-center justify-center p-2"
+                  style={{ width: "max-content", height: "max-content" }}
+                >
+                  <div
+                    className="relative shrink-0 select-none"
+                    style={
+                      imageSize
+                        ? {
+                            width: `${imageSize.width * imageDisplayScale}px`,
+                            height: `${imageSize.height * imageDisplayScale}px`,
+                          }
+                        : { width: "1px", height: "1px", visibility: "hidden" }
                     }
-                  />
-                  {imageSize ? (
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={currentImage.url}
+                      alt={currentImage.name}
+                      className="block h-full w-full object-contain"
+                      draggable={false}
+                    />
+                    {imageSize ? (
                     <svg
                       ref={overlayRef}
                       className="absolute inset-0 h-full w-full touch-none"
@@ -1268,10 +1399,11 @@ export function LayoutRoughLabeler() {
                         />
                       ) : null}
                     </svg>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
               ) : (
-                <div className="px-6 text-center text-sm leading-6 text-zinc-300">
+                <div className="flex min-h-full items-center justify-center px-6 text-center text-sm leading-6 text-zinc-300">
                   ローカル画像フォルダを読み込むと、ここにプレビューが表示されます。
                 </div>
               )}
