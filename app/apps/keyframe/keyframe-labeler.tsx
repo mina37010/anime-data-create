@@ -18,6 +18,7 @@ const csvColumns = [
   "paper_color_other",
   "explicit_correction_flag",
   "explicit_inbetween_reference_flag",
+  "inbetween_drawing_flag",
   "related_material_flag",
   "blank_paper_flag",
   "composite_instruction_flag",
@@ -50,6 +51,7 @@ type Annotation = {
   paperColorOther: string;
   explicitCorrectionFlag: boolean;
   explicitInbetweenReferenceFlag: boolean;
+  inbetweenDrawingFlag: boolean;
   relatedMaterialFlag: boolean;
   blankPaperFlag: boolean;
   compositeInstructionFlag: boolean;
@@ -68,6 +70,7 @@ type Draft = {
   paperColorOther: string;
   explicitCorrectionFlag: boolean;
   explicitInbetweenReferenceFlag: boolean;
+  inbetweenDrawingFlag: boolean;
   relatedMaterialFlag: boolean;
   blankPaperFlag: boolean;
   compositeInstructionFlag: boolean;
@@ -75,11 +78,11 @@ type Draft = {
 };
 
 type Classification = {
-  kind: "normal" | "correction" | "inbetween_reference" | "related_material" | "blank_paper";
+  kind: "normal" | "correction" | "inbetween_reference" | "inbetween_drawing" | "related_material" | "blank_paper";
   source: "none" | "explicit" | "inferred";
 };
 
-type MaterialMark = "none" | "correction" | "inbetween_reference" | "related_material" | "blank_paper";
+type MaterialMark = "none" | "correction" | "inbetween_reference" | "inbetween_drawing" | "related_material" | "blank_paper";
 type PaperColor = "none" | "white" | "pink" | "yellow" | "other";
 
 type TimelineEntry = {
@@ -105,6 +108,7 @@ const initialDraft: Draft = {
   paperColorOther: "",
   explicitCorrectionFlag: false,
   explicitInbetweenReferenceFlag: false,
+  inbetweenDrawingFlag: false,
   relatedMaterialFlag: false,
   blankPaperFlag: false,
   compositeInstructionFlag: false,
@@ -248,6 +252,7 @@ function isOriginalTimingAnchor(annotation: Annotation) {
     !isColoredPaper(annotation) &&
     !annotation.explicitCorrectionFlag &&
     !annotation.explicitInbetweenReferenceFlag &&
+    !annotation.inbetweenDrawingFlag &&
     !annotation.relatedMaterialFlag &&
     !annotation.blankPaperFlag &&
     !annotation.compositeInstructionFlag
@@ -271,6 +276,10 @@ function classifyAnnotation(annotation: Annotation, annotations: Annotation[]): 
 
   if (annotation.explicitInbetweenReferenceFlag) {
     return { kind: "inbetween_reference", source: "explicit" };
+  }
+
+  if (annotation.inbetweenDrawingFlag) {
+    return { kind: "inbetween_drawing", source: "explicit" };
   }
 
   if (annotation.relatedMaterialFlag) {
@@ -307,6 +316,10 @@ function classificationLabel(classification: Classification) {
     return "関連資料(その他)";
   }
 
+  if (classification.kind === "inbetween_drawing") {
+    return "動画";
+  }
+
   if (classification.kind === "blank_paper") {
     return "白紙";
   }
@@ -324,6 +337,9 @@ function materialTypeLabel(classification: Classification) {
   }
   if (classification.kind === "inbetween_reference") {
     return "中割り参考";
+  }
+  if (classification.kind === "inbetween_drawing") {
+    return "動画";
   }
   if (classification.kind === "blank_paper") {
     return "白紙";
@@ -409,6 +425,9 @@ function materialMarkFromDraft(draft: Draft): MaterialMark {
   if (draft.explicitInbetweenReferenceFlag) {
     return "inbetween_reference";
   }
+  if (draft.inbetweenDrawingFlag) {
+    return "inbetween_drawing";
+  }
   if (draft.relatedMaterialFlag) {
     return "related_material";
   }
@@ -422,6 +441,7 @@ function draftFlagsFromMaterialMark(mark: MaterialMark) {
   return {
     explicitCorrectionFlag: mark === "correction",
     explicitInbetweenReferenceFlag: mark === "inbetween_reference",
+    inbetweenDrawingFlag: mark === "inbetween_drawing",
     relatedMaterialFlag: mark === "related_material",
     blankPaperFlag: mark === "blank_paper",
   };
@@ -500,6 +520,10 @@ function annotationsFromCsv(text: string): Annotation[] {
       ? isFlagOn(values.get("explicit_correction_flag"))
       : isFlagOn(values.get("fix_flag"));
     const explicitInbetweenReferenceFlag = isFlagOn(values.get("explicit_inbetween_reference_flag"));
+    const inbetweenDrawingFlag =
+      isFlagOn(values.get("inbetween_drawing_flag")) ||
+      classification === "inbetween_drawing" ||
+      materialType === "動画";
     const relatedMaterialFlag =
       isFlagOn(values.get("related_material_flag")) ||
       classification === "related_material" ||
@@ -536,6 +560,7 @@ function annotationsFromCsv(text: string): Annotation[] {
         paperColorOther: values.get("paper_color_other")?.trim() ?? "",
         explicitCorrectionFlag,
         explicitInbetweenReferenceFlag,
+        inbetweenDrawingFlag,
         relatedMaterialFlag,
         blankPaperFlag,
         compositeInstructionFlag,
@@ -565,6 +590,7 @@ function annotationsToCsv(annotations: Annotation[]) {
         annotation.paperColorOther,
         classification.kind === "correction" ? "1" : "0",
         classification.kind === "inbetween_reference" ? "1" : "0",
+        annotation.inbetweenDrawingFlag ? "1" : "0",
         annotation.relatedMaterialFlag ? "1" : "0",
         annotation.blankPaperFlag ? "1" : "0",
         annotation.compositeInstructionFlag ? "1" : "0",
@@ -587,6 +613,7 @@ function draftFromAnnotation(annotation: Annotation): Draft {
     paperColorOther: annotation.paperColorOther,
     explicitCorrectionFlag: annotation.explicitCorrectionFlag,
     explicitInbetweenReferenceFlag: annotation.explicitInbetweenReferenceFlag,
+    inbetweenDrawingFlag: annotation.inbetweenDrawingFlag,
     relatedMaterialFlag: annotation.relatedMaterialFlag,
     blankPaperFlag: annotation.blankPaperFlag,
     compositeInstructionFlag: annotation.compositeInstructionFlag,
@@ -671,17 +698,21 @@ export function KeyframeLabeler() {
       }
       if (key === "5" && !locked) {
         event.preventDefault();
-        updatePaperColor("white");
+        updateMaterialMark("inbetween_drawing");
       }
       if (key === "6" && !locked) {
         event.preventDefault();
-        updatePaperColor("pink");
+        updatePaperColor("white");
       }
       if (key === "7" && !locked) {
         event.preventDefault();
-        updatePaperColor("yellow");
+        updatePaperColor("pink");
       }
       if (key === "8" && !locked) {
+        event.preventDefault();
+        updatePaperColor("yellow");
+      }
+      if (key === "9" && !locked) {
         event.preventDefault();
         updatePaperColor("other");
       }
@@ -748,6 +779,7 @@ export function KeyframeLabeler() {
         paperColorOther: "",
         explicitCorrectionFlag: false,
         explicitInbetweenReferenceFlag: false,
+        inbetweenDrawingFlag: false,
         relatedMaterialFlag: false,
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -776,6 +808,7 @@ export function KeyframeLabeler() {
         paperColorOther: "",
         explicitCorrectionFlag: false,
         explicitInbetweenReferenceFlag: false,
+        inbetweenDrawingFlag: false,
         relatedMaterialFlag: false,
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -932,6 +965,7 @@ export function KeyframeLabeler() {
       paperColorOther: draft.paperColorOther.trim(),
       explicitCorrectionFlag: draft.explicitCorrectionFlag,
       explicitInbetweenReferenceFlag: draft.explicitInbetweenReferenceFlag,
+      inbetweenDrawingFlag: draft.inbetweenDrawingFlag,
       relatedMaterialFlag: draft.relatedMaterialFlag,
       blankPaperFlag: draft.blankPaperFlag,
       compositeInstructionFlag: draft.compositeInstructionFlag,
@@ -962,6 +996,7 @@ export function KeyframeLabeler() {
         keyframeNumber: "",
         explicitCorrectionFlag: false,
         explicitInbetweenReferenceFlag: false,
+        inbetweenDrawingFlag: false,
         relatedMaterialFlag: false,
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -1010,6 +1045,7 @@ export function KeyframeLabeler() {
         keyframeNumber: "",
         explicitCorrectionFlag: false,
         explicitInbetweenReferenceFlag: false,
+        inbetweenDrawingFlag: false,
         relatedMaterialFlag: false,
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -1085,6 +1121,7 @@ export function KeyframeLabeler() {
         keyframeNumber: "",
         explicitCorrectionFlag: false,
         explicitInbetweenReferenceFlag: false,
+        inbetweenDrawingFlag: false,
         relatedMaterialFlag: false,
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -1202,6 +1239,7 @@ export function KeyframeLabeler() {
         paperColorOther: draft.paperColorOther,
         explicitCorrectionFlag: draft.explicitCorrectionFlag,
         explicitInbetweenReferenceFlag: draft.explicitInbetweenReferenceFlag,
+        inbetweenDrawingFlag: draft.inbetweenDrawingFlag,
         relatedMaterialFlag: draft.relatedMaterialFlag,
         blankPaperFlag: draft.blankPaperFlag,
         compositeInstructionFlag: draft.compositeInstructionFlag,
@@ -1534,6 +1572,7 @@ export function KeyframeLabeler() {
                   ["inbetween_reference", "参考", "Ctrl+2"],
                   ["related_material", "関連資料(その他)", "Ctrl+3"],
                   ["blank_paper", "白紙", "Ctrl+4"],
+                  ["inbetween_drawing", "動画", "Ctrl+5"],
                 ].map(([value, label, shortcut]) => (
                   <label
                     key={value}
@@ -1562,10 +1601,10 @@ export function KeyframeLabeler() {
               <legend className="field-label">色</legend>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  ["white", "白", "Ctrl+5"],
-                  ["pink", "ピンク", "Ctrl+6"],
-                  ["yellow", "黄", "Ctrl+7"],
-                  ["other", "その他", "Ctrl+8"],
+                  ["white", "白", "Ctrl+6"],
+                  ["pink", "ピンク", "Ctrl+7"],
+                  ["yellow", "黄", "Ctrl+8"],
+                  ["other", "その他", "Ctrl+9"],
                 ].map(([value, label, shortcut]) => (
                   <label
                     key={value}
@@ -1645,7 +1684,7 @@ export function KeyframeLabeler() {
               </div>
             </div>
             <p className="text-xs leading-5 text-zinc-500">
-              Ctrl: I画像 / O読込 / Enter保存 / 1修正 / 2参考 / 3関連 / 4白紙 / 5白 / 6桃 / 7黄 / 8他色 / Q合成
+              Ctrl: I画像 / O読込 / Enter保存 / 1修正 / 2参考 / 3関連 / 4白紙 / 5動画 / 6白 / 7桃 / 8黄 / 9他色 / Q合成
             </p>
           </div>
         </section>
