@@ -500,6 +500,10 @@ function csvEscape(value: string | number) {
   return text;
 }
 
+function sanitizeFilenamePrefix(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, "_");
+}
+
 function annotationsFromCsv(text: string): Annotation[] {
   const rows = parseCsv(text.trim());
   if (rows.length === 0) {
@@ -633,6 +637,7 @@ export function KeyframeLabeler() {
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [status, setStatus] = useState("ローカル画像フォルダを読み込んでください。画像はサーバーへ送信されません。");
   const [mainView, setMainView] = useState<"image" | "timeline">("image");
+  const [csvFilenamePrefix, setCsvFilenamePrefix] = useState("");
 
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
@@ -985,6 +990,15 @@ export function KeyframeLabeler() {
     const unifiedAnnotations = nextAnnotations;
 
     setAnnotations(unifiedAnnotations);
+    if (editingId) {
+      setLocked(true);
+      setSelectedId(annotation.id);
+      setEditingId(null);
+      setDraft(draftFromAnnotation(annotation));
+      setStatus("選択した枠を更新しました。別の枠を選択できます。");
+      return;
+    }
+
     if (mode === "next") {
       loadImageAt(index + 1, unifiedAnnotations);
     } else {
@@ -1220,11 +1234,13 @@ export function KeyframeLabeler() {
     const csv = `\uFEFF${annotationsToCsv(annotations)}`;
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
+    const prefix = csvFilenamePrefix.trim().replace(/_+$/, "");
+    const filename = prefix ? `${prefix}_keyframe.csv` : "keyframe.csv";
     anchor.href = url;
-    anchor.download = "keyframe.csv";
+    anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
-    setStatus("keyframe.csv を書き出しました。");
+    setStatus(`${filename} を書き出しました。`);
   }
 
   const normalizedDraftBbox = normalizeBbox(draft.bbox);
@@ -1497,18 +1513,26 @@ export function KeyframeLabeler() {
               原画なし修正を参考へ適用
             </button>
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
-            <div className="rounded-md border border-zinc-200 p-1.5">
-              <span className="block text-base font-semibold">{images.length}</span>
-              画像
-            </div>
-            <div className="rounded-md border border-zinc-200 p-1.5">
-              <span className="block text-base font-semibold">{annotations.length}</span>
-              行
-            </div>
-            <div className="rounded-md border border-zinc-200 p-1.5">
-              <span className="block text-base font-semibold">{totalWithAnnotations}</span>
-              入力済
+          <div className="mt-2 flex items-center justify-between rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600">
+            <span><strong className="text-sm text-zinc-900">{images.length}</strong> 画像</span>
+            <span><strong className="text-sm text-zinc-900">{annotations.length}</strong> 行</span>
+            <span><strong className="text-sm text-zinc-900">{totalWithAnnotations}</strong> 入力済</span>
+          </div>
+          <div className="mt-2 grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+            <label className="field-label" htmlFor="csv-filename-prefix">
+              出力名
+            </label>
+            <div className="flex min-w-0 items-center overflow-hidden rounded-md border border-zinc-300 bg-white focus-within:border-zinc-900">
+              <input
+                id="csv-filename-prefix"
+                className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1.5 text-sm outline-none"
+                value={csvFilenamePrefix}
+                placeholder="C〇〇"
+                onChange={(event) => setCsvFilenamePrefix(sanitizeFilenamePrefix(event.target.value))}
+              />
+              <span className="shrink-0 border-l border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500">
+                _keyframe.csv
+              </span>
             </div>
           </div>
         </section>
