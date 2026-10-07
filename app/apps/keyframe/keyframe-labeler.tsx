@@ -327,9 +327,23 @@ function classifyAnnotation(annotation: Annotation, annotations: Annotation[]): 
     : { kind: "inbetween_reference", source: "inferred" };
 }
 
+function hasOriginalOrInbetweenReferenceAtSameTiming(annotation: Annotation, annotations: Annotation[]) {
+  return annotations.some((candidate) => {
+    if (
+      candidate.id === annotation.id ||
+      candidate.layer !== annotation.layer ||
+      candidate.keyframeNumber !== annotation.keyframeNumber
+    ) {
+      return false;
+    }
+
+    return isOriginalTimingAnchor(candidate) || classifyAnnotation(candidate, annotations).kind === "inbetween_reference";
+  });
+}
+
 function classifyAnnotationForExport(annotation: Annotation, annotations: Annotation[]): Classification {
   const classification = classifyAnnotation(annotation, annotations);
-  if (classification.kind === "correction" && !hasOriginalAtSameTiming(annotation, annotations)) {
+  if (classification.kind === "correction" && !hasOriginalOrInbetweenReferenceAtSameTiming(annotation, annotations)) {
     return { kind: "inbetween_reference", source: "inferred" };
   }
   return classification;
@@ -969,7 +983,10 @@ export function KeyframeLabeler() {
     let changedCount = 0;
     const nextAnnotations = annotations.map((annotation) => {
       const classification = classifyAnnotation(annotation, annotations);
-      if (classification.kind !== "correction" || hasOriginalAtSameTiming(annotation, annotations)) {
+      if (
+        classification.kind !== "correction" ||
+        hasOriginalOrInbetweenReferenceAtSameTiming(annotation, annotations)
+      ) {
         return annotation;
       }
       changedCount += 1;
@@ -981,7 +998,7 @@ export function KeyframeLabeler() {
     });
 
     if (changedCount === 0) {
-      setStatus("原画がない修正は見つかりませんでした。");
+      setStatus("同タイミングに原画も中割り参考もない修正は見つかりませんでした。");
       return;
     }
 
@@ -991,7 +1008,9 @@ export function KeyframeLabeler() {
     if (activeAnnotation) {
       setDraft(draftFromAnnotation(activeAnnotation));
     }
-    setStatus(`${changedCount}件の修正を中割り参考に変更しました。タイムラインで確認できます。`);
+    setStatus(
+      `原画も中割り参考もない${changedCount}件の修正を中割り参考に変更しました。タイムラインで確認できます。`,
+    );
   }
 
   function buildAnnotation(): Annotation | null {
