@@ -7,7 +7,7 @@ const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "bmp", "tif", "tif
 const imageAccept = "image/*,.tif,.tiff,.csv";
 const naturalCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
 const csvColumns = [
-  "collection_title",
+  "image_title",
   "image_filename",
   "target_name",
   "target_type",
@@ -33,6 +33,7 @@ type ImageEntry = {
 };
 
 type MetadataDraft = {
+  imageTitle: string;
   targetName: string;
   targetType: string;
   subTargetVariation: string;
@@ -46,6 +47,7 @@ type MetadataDraft = {
 type MetadataByImage = Record<string, MetadataDraft>;
 
 const emptyMetadata: MetadataDraft = {
+  imageTitle: "",
   targetName: "",
   targetType: "",
   subTargetVariation: "",
@@ -199,15 +201,15 @@ function readMetadataCsv(text: string) {
   const header = rows[0] ?? [];
   const indexes = Object.fromEntries(header.map((name, index) => [name, index]));
   const nextMetadata: MetadataByImage = {};
-  let nextCollectionTitle = "";
+  const imageTitleIndex = indexes.image_title ?? indexes.collection_title;
 
   rows.slice(1).forEach((row) => {
     const imageFilename = row[indexes.image_filename]?.trim();
     if (!imageFilename) {
       return;
     }
-    nextCollectionTitle ||= row[indexes.collection_title] ?? "";
     nextMetadata[imageFilename] = {
+      imageTitle: imageTitleIndex === undefined ? "" : (row[imageTitleIndex] ?? ""),
       targetName: displayMultiValue(row[indexes.target_name] ?? ""),
       targetType: row[indexes.target_type] ?? "",
       subTargetVariation: row[indexes.sub_target_variation] ?? "",
@@ -219,7 +221,7 @@ function readMetadataCsv(text: string) {
     };
   });
 
-  return { collectionTitle: nextCollectionTitle, metadata: nextMetadata };
+  return nextMetadata;
 }
 
 function metadataIsFilled(metadata: MetadataDraft) {
@@ -230,49 +232,15 @@ function metadataForImage(metadataByImage: MetadataByImage, imageName: string) {
   return metadataByImage[imageName] ?? emptyMetadata;
 }
 
-function frequentValues(values: string[], limit = 3) {
-  const counts = new Map<string, number>();
-  values
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1));
-
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || naturalCollator.compare(a[0], b[0]))
-    .slice(0, limit)
-    .map(([value]) => value);
-}
-
-function generatedCollectionTitle(images: ImageEntry[], metadataByImage: MetadataByImage) {
-  const metadataList = images.map((image) => metadataForImage(metadataByImage, image.name)).filter(metadataIsFilled);
-  if (metadataList.length === 0) {
-    return "";
-  }
-
-  const targetNames = frequentValues(metadataList.flatMap((metadata) => splitMultiValue(metadata.targetName)), 3);
-  const targetTypes = frequentValues(metadataList.map((metadata) => metadata.targetType), 2);
-  const variations = frequentValues(metadataList.map((metadata) => metadata.subTargetVariation), 2);
-  const materialContents = frequentValues(metadataList.map((metadata) => metadata.materialContent), 3);
-  const referenceTypes = frequentValues(metadataList.map((metadata) => metadata.referenceType), 1);
-  const sheetNumbers = metadataList.map((metadata) => metadata.sheetNumber.trim()).filter(Boolean);
-  const dates = metadataList.map((metadata) => metadata.productionDate.trim()).filter(Boolean);
-  const dateRange =
-    dates.length > 0
-      ? Array.from(new Set(dates)).sort((a, b) => naturalCollator.compare(a, b))
-      : [];
-  const sheetRange =
-    sheetNumbers.length > 0
-      ? Array.from(new Set(sheetNumbers)).sort((a, b) => naturalCollator.compare(a, b))
-      : [];
-
+function generatedImageTitle(metadata: MetadataDraft) {
   return [
-    targetNames.join("・"),
-    targetTypes.join("・"),
-    variations.join("・"),
-    materialContents.join("・"),
-    referenceTypes.join("・"),
-    sheetRange.length > 0 ? `シート${sheetRange.length === 1 ? sheetRange[0] : `${sheetRange[0]}-${sheetRange.at(-1)}`}` : "",
-    dateRange.length > 0 ? (dateRange.length === 1 ? dateRange[0] : `${dateRange[0]}-${dateRange.at(-1)}`) : "",
+    splitMultiValue(metadata.targetName).join("・"),
+    metadata.targetType.trim(),
+    metadata.subTargetVariation.trim(),
+    metadata.materialContent.trim(),
+    metadata.referenceType.trim(),
+    metadata.sheetNumber.trim() ? `シート${metadata.sheetNumber.trim()}` : "",
+    metadata.productionDate.trim(),
   ]
     .filter(Boolean)
     .join(" / ");
@@ -282,7 +250,6 @@ export function ModelSheetMetadataEditor() {
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<ImageEntry[]>([]);
-  const [collectionTitle, setCollectionTitle] = useState("");
   const [images, setImages] = useState<ImageEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [metadataByImage, setMetadataByImage] = useState<MetadataByImage>({});
@@ -324,8 +291,7 @@ export function ModelSheetMetadataEditor() {
   const completedCount = useMemo(() => {
     return images.filter((image) => metadataIsFilled(metadataForImage(metadataByImage, image.name))).length;
   }, [images, metadataByImage]);
-  const autoCollectionTitle = useMemo(() => generatedCollectionTitle(images, metadataByImage), [images, metadataByImage]);
-  const effectiveCollectionTitle = collectionTitle.trim() || autoCollectionTitle;
+  const autoImageTitle = generatedImageTitle(currentMetadata);
 
   async function loadFiles(files: File[]) {
     const imageFiles = files.filter(isImageFile).sort((a, b) => naturalCollator.compare(fileDisplayName(a), fileDisplayName(b)));
@@ -357,9 +323,7 @@ export function ModelSheetMetadataEditor() {
       setCurrentIndex(0);
 
       if (csvFile) {
-        const loadedCsv = readMetadataCsv(await csvFile.text());
-        setCollectionTitle(loadedCsv.collectionTitle);
-        setMetadataByImage(loadedCsv.metadata);
+        setMetadataByImage(readMetadataCsv(await csvFile.text()));
         setStatus(`${loadedImages.length} 画像とCSVを読み込みました。`);
       } else {
         setMetadataByImage({});
@@ -382,9 +346,7 @@ export function ModelSheetMetadataEditor() {
     if (!file) {
       return;
     }
-    const loadedCsv = readMetadataCsv(await file.text());
-    setCollectionTitle(loadedCsv.collectionTitle);
-    setMetadataByImage(loadedCsv.metadata);
+    setMetadataByImage(readMetadataCsv(await file.text()));
     setStatus("CSVを読み込みました。");
     event.target.value = "";
   }
@@ -421,7 +383,7 @@ export function ModelSheetMetadataEditor() {
       ...images.map((image) => {
         const metadata = metadataForImage(metadataByImage, image.name);
         return [
-          effectiveCollectionTitle,
+          metadata.imageTitle.trim() || generatedImageTitle(metadata),
           image.name,
           csvMultiValue(metadata.targetName),
           metadata.targetType,
@@ -526,17 +488,18 @@ export function ModelSheetMetadataEditor() {
         <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
             <label className="grid gap-1">
-              <span className="field-label">全体タイトル</span>
+              <span className="field-label">画像のタイトル</span>
               <input
                 className="field-control"
-                value={collectionTitle}
-                onChange={(event) => setCollectionTitle(event.target.value)}
-                placeholder={autoCollectionTitle || "入力内容から自動生成"}
+                value={currentMetadata.imageTitle}
+                disabled={!currentImage}
+                onChange={(event) => updateCurrentMetadata("imageTitle", event.target.value)}
+                placeholder={autoImageTitle || "入力内容から自動生成"}
               />
             </label>
             <p className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs leading-5 text-zinc-600">
-              自動: {autoCollectionTitle || "未生成"}
-              {collectionTitle.trim() ? " / 手入力が優先されます" : ""}
+              自動: {autoImageTitle || "未生成"}
+              {currentMetadata.imageTitle.trim() ? " / 手入力が優先されます" : ""}
             </p>
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="rounded-md border border-zinc-200 p-1.5">

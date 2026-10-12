@@ -394,6 +394,16 @@ function draftFlagsFromMaterialMark(mark: MaterialMark) {
   };
 }
 
+function timelinePositionIsOptional(mark: MaterialMark) {
+  return (
+    mark === "layout" ||
+    mark === "reference" ||
+    mark === "book" ||
+    mark === "assembly_instruction" ||
+    mark === "blank_paper"
+  );
+}
+
 function parseCsv(text: string) {
   const rows: string[][] = [];
   let field = "";
@@ -463,7 +473,7 @@ function materialMarkFromCsv(values: Map<string, string>): MaterialMark {
   if (classification === "correction_rough_keyframe" || materialType === "修正ラフ原画") {
     return "correction_rough_keyframe";
   }
-  if (classification === "reference" || materialType === "参考") {
+  if (classification === "reference" || materialType === "参考" || materialType === "関連資料") {
     return "reference";
   }
   if (classification === "book" || materialType === "Book") {
@@ -513,8 +523,7 @@ function annotationsFromCsv(text: string): Annotation[] {
     const keyframeNumber = values.get("keyframe_number")?.trim() ?? "";
     const coloredPaperFlag = isFlagOn(values.get("colored_paper_flag"));
     const materialMark = materialMarkFromCsv(values);
-    const canOmitTimelinePosition =
-      materialMark === "book" || materialMark === "assembly_instruction" || materialMark === "blank_paper";
+    const canOmitTimelinePosition = timelinePositionIsOptional(materialMark);
     const compositeInstructionFlag = isFlagOn(values.get("composite_instruction_flag"));
 
     if (!imageFilename || (!canOmitTimelinePosition && (!layer || !keyframeNumber))) {
@@ -920,8 +929,7 @@ export function LayoutRoughLabeler() {
 
     const layer = getLayerValue();
     const keyframeNumber = draft.keyframeNumber.trim();
-    const canOmitTimelinePosition =
-      draft.materialMark === "book" || draft.materialMark === "assembly_instruction" || draft.materialMark === "blank_paper";
+    const canOmitTimelinePosition = timelinePositionIsOptional(draft.materialMark);
     if (!canOmitTimelinePosition && !layer) {
       setStatus("レイヤーを選択または入力してください。");
       return null;
@@ -1743,16 +1751,16 @@ export function LayoutRoughLabeler() {
           </div>
         </section>
 
-        <section className="min-h-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <section className="w-full min-w-0 shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <h2 className="text-sm font-semibold tracking-normal text-zinc-900">既存行</h2>
-          <div className="mt-2 max-h-36 overflow-auto rounded-md border border-zinc-200 lg:max-h-none">
+          <div className="mt-2 max-h-40 w-full min-w-0 overflow-y-auto overflow-x-hidden rounded-md border border-zinc-200">
             {currentAnnotations.length > 0 ? (
               currentAnnotations.map((annotation, rowIndex) => (
                 <button
                   key={annotation.id}
                   type="button"
                   className={classNames(
-                    "flex w-full items-center justify-between gap-3 border-b border-zinc-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-zinc-50",
+                    "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,55%)] items-center gap-2 border-b border-zinc-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-zinc-50",
                     annotation.id === selectedId && "bg-blue-50",
                   )}
                   onClick={() => selectAnnotation(annotation)}
@@ -1760,7 +1768,7 @@ export function LayoutRoughLabeler() {
                   <span className="min-w-0 truncate">
                     {rowIndex + 1}. {annotation.bbox ? "□" : "-"} {annotation.layer} / {annotation.keyframeNumber}
                   </span>
-                  <span className="shrink-0 text-xs text-zinc-500">
+                  <span className="min-w-0 truncate text-right text-xs text-zinc-500">
                     {classificationLabel(classifyAnnotation(annotation))} / {paperColorLabel(annotation.paperColor, annotation.paperColorOther)}
                     {annotation.compositeInstructionFlag ? " / 合成" : ""}
                   </span>
@@ -1772,7 +1780,14 @@ export function LayoutRoughLabeler() {
           </div>
         </section>
 
-        <p className="rounded-lg border border-zinc-200 bg-white p-2 text-xs leading-5 text-zinc-700 shadow-sm">{status}</p>
+        <p
+          className="max-h-14 w-full shrink-0 overflow-auto rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs leading-4 text-zinc-700 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          {status}
+        </p>
+
       </aside>
     </div>
   );
