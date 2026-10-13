@@ -693,11 +693,11 @@ export function LayoutRoughLabeler() {
 
       if (key === "1" && !locked) {
         event.preventDefault();
-        updateMaterialMark("layout");
+        updateMaterialMark("correction_layout");
       }
       if (key === "2" && !locked) {
         event.preventDefault();
-        updateMaterialMark("correction_layout");
+        updateMaterialMark("reference");
       }
       if (key === "3" && !locked) {
         event.preventDefault();
@@ -705,19 +705,19 @@ export function LayoutRoughLabeler() {
       }
       if (key === "4" && !locked) {
         event.preventDefault();
-        updateMaterialMark("correction_rough_keyframe");
+        updateMaterialMark("blank_paper");
       }
       if (key === "5" && !locked) {
         event.preventDefault();
-        updateMaterialMark("reference");
+        updateMaterialMark("correction_rough_keyframe");
       }
       if (key === "6" && !locked) {
         event.preventDefault();
-        updateMaterialMark("book");
+        updatePaperColor("white");
       }
       if (key === "7" && !locked) {
         event.preventDefault();
-        updateMaterialMark("blank_paper");
+        updatePaperColor("pink");
       }
       if (key === "k" && !locked) {
         event.preventDefault();
@@ -725,19 +725,19 @@ export function LayoutRoughLabeler() {
       }
       if (key === "8" && !locked) {
         event.preventDefault();
-        updatePaperColor("white");
+        updatePaperColor("yellow");
       }
       if (key === "9" && !locked) {
         event.preventDefault();
-        updatePaperColor("pink");
+        updatePaperColor("other");
       }
       if (key === "0" && !locked) {
         event.preventDefault();
-        updatePaperColor("yellow");
+        updateMaterialMark("layout");
       }
-      if (key === "-" && !locked) {
+      if (key === "b" && !locked) {
         event.preventDefault();
-        updatePaperColor("other");
+        updateMaterialMark("book");
       }
       if (key === "q" && !locked) {
         event.preventDefault();
@@ -830,7 +830,6 @@ export function LayoutRoughLabeler() {
         bbox: null,
       }));
       setStatus("新規入力を行ってください。");
-      window.setTimeout(() => layerInputRef.current?.focus(), 0);
     }
   }
 
@@ -1520,8 +1519,8 @@ export function LayoutRoughLabeler() {
         )}
       </section>
 
-      <aside className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:pr-1">
-        <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+      <aside className="flex min-h-0 flex-col gap-2 overflow-y-auto lg:pr-1">
+        <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
             <input
               ref={(node) => {
@@ -1573,7 +1572,7 @@ export function LayoutRoughLabeler() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
+        <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
             <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
               <div className="grid gap-1">
@@ -1627,14 +1626,14 @@ export function LayoutRoughLabeler() {
               <legend className="field-label">資料種別</legend>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  ["layout", "レイアウト", "Ctrl+1"],
-                  ["correction_layout", "修正レイアウト", "Ctrl+2"],
+                  ["layout", "レイアウト", "Ctrl+0"],
+                  ["correction_layout", "修正レイアウト", "Ctrl+1"],
                   ["rough_keyframe", "ラフ原画", "Ctrl+3"],
-                  ["correction_rough_keyframe", "修正ラフ原画", "Ctrl+4"],
-                  ["reference", "参考", "Ctrl+5"],
-                  ["book", "Book", "Ctrl+6"],
+                  ["correction_rough_keyframe", "修正ラフ原画", "Ctrl+5"],
+                  ["reference", "参考", "Ctrl+2"],
+                  ["book", "Book", "Ctrl+B"],
                   ["assembly_instruction", "組み指示", "Ctrl+K"],
-                  ["blank_paper", "白紙", "Ctrl+7"],
+                  ["blank_paper", "白紙", "Ctrl+4"],
                 ].map(([value, label, shortcut]) => (
                   <label
                     key={value}
@@ -1663,10 +1662,10 @@ export function LayoutRoughLabeler() {
               <legend className="field-label">色</legend>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  ["white", "白", "Ctrl+8"],
-                  ["pink", "ピンク", "Ctrl+9"],
-                  ["yellow", "黄", "Ctrl+0"],
-                  ["other", "その他", "Ctrl+-"],
+                  ["white", "白", "Ctrl+6"],
+                  ["pink", "ピンク", "Ctrl+7"],
+                  ["yellow", "黄", "Ctrl+8"],
+                  ["other", "その他", "Ctrl+9"],
                 ].map(([value, label, shortcut]) => (
                   <label
                     key={value}
@@ -1746,7 +1745,7 @@ export function LayoutRoughLabeler() {
               </div>
             </div>
             <p className="text-xs leading-5 text-zinc-500">
-              Ctrl: I画像 / O読込 / Enter保存 / 1レイアウト / 2修正レイアウト / 3ラフ原画 / 4修正ラフ / 5参考 / 6Book / 7白紙 / K組み指示 / 8白 / 9桃 / 0黄 / -他色 / Q合成
+              Ctrl: I画像 / O読込 / Enter保存 / 0レイアウト / 1修正レイアウト / 2参考 / 3ラフ原画 / 4白紙 / 5修正ラフ / B Book / K組み指示 / 6白 / 7桃 / 8黄 / 9他色 / Q合成
             </p>
           </div>
         </section>

@@ -888,7 +888,6 @@ export function KeyframeLabeler() {
         bbox: null,
       }));
       setStatus("新規入力を行ってください。");
-      window.setTimeout(() => layerInputRef.current?.focus(), 0);
     }
   }
 
