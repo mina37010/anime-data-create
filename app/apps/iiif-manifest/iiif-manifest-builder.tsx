@@ -3,7 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import * as UTIF from "utif";
 
-const semanticLabels = ["background", "book", "frame"] as const;
+const semanticLabels = ["background", "book", "frame", "effect"] as const;
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"]);
 const imageAccept = "image/*,.tif,.tiff";
 const naturalCollator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
@@ -51,6 +51,7 @@ type FolderSummary = {
   backgroundCount: number;
   bookCount: number;
   frameCount: number;
+  effectCount: number;
   otherCount: number;
 };
 
@@ -93,18 +94,21 @@ const labelText: Record<SemanticLabel, string> = {
   background: "background",
   book: "book",
   frame: "frame",
+  effect: "effect",
 };
 
 const labelChipClass: Record<SemanticLabel, string> = {
   background: "border-emerald-300 bg-emerald-50 text-emerald-700",
   book: "border-sky-300 bg-sky-50 text-sky-700",
   frame: "border-amber-300 bg-amber-50 text-amber-800",
+  effect: "border-rose-300 bg-rose-50 text-rose-700",
 };
 
 const defaultRegexSettings: RegexSettings = {
   background: "(^|[/_.\\s-])(bg|background|背景)[0-9０-９]*([/_.\\s-]|$)",
   book: "(^|[/_.\\s-])book[0-9０-９]*([/_.\\s-]|$)",
   frame: "(^|[/_.\\s-])(f|frame|fr|フレーム|枠)[0-9０-９]*([/_.\\s-]|$)",
+  effect: "(^|[/_.\\s-])(effect|effects|fx|エフェクト)[0-9０-９]*([/_.\\s-]|$)",
 };
 
 function classNames(...values: Array<string | false | null | undefined>) {
@@ -217,9 +221,8 @@ function valueMap(value: string | string[]) {
   return { none: Array.isArray(value) ? value : [value] };
 }
 
-function imageManifestLabel(kind: ManifestImageKind, image: ImageWithLabel, prefix?: string) {
-  const prefixText = prefix ? `${prefix}: ` : "";
-  return `${kind}: ${prefixText}${image.fileName}`;
+function imageManifestLabel(kind: ManifestImageKind, image: ImageWithLabel) {
+  return `${kind}: ${image.fileName}`;
 }
 
 function imageMetadata(kind: ManifestImageKind, image: ImageWithLabel) {
@@ -424,13 +427,13 @@ function sortImages<T extends { relativePath: string }>(images: T[]) {
   return [...images].sort((a, b) => naturalCollator.compare(a.relativePath, b.relativePath));
 }
 
-function bodyForImage(imageApiBaseUrl: string, image: ImageWithLabel, kind: ManifestImageKind, prefix?: string) {
+function bodyForImage(imageApiBaseUrl: string, image: ImageWithLabel, kind: ManifestImageKind) {
   const serviceId = iiifImageServiceId(imageApiBaseUrl, image);
   return {
     id: `${serviceId}/full/max/0/default.png`,
     type: "Image",
     format: "image/png",
-    label: labelMap(imageManifestLabel(kind, image, prefix)),
+    label: labelMap(imageManifestLabel(kind, image)),
     metadata: imageMetadata(kind, image),
     width: image.width,
     height: image.height,
@@ -479,37 +482,13 @@ function buildManifest(
 ) {
   const sortedImages = sortImages(folderImages);
   const backgrounds = sortedImages.filter((image) => image.effectiveLabel === "background");
-  const books = sortedImages.filter((image) => image.effectiveLabel === "book");
-  const frames = sortedImages.filter((image) => image.effectiveLabel === "frame");
-  const others = sortedImages.filter((image) => image.effectiveLabel === null);
   const canvasWidth = Math.max(...sortedImages.map((image) => image.width), 1);
   const canvasHeight = Math.max(...sortedImages.map((image) => image.height), 1);
   const manifestId = joinUrl(manifestBaseUrl, `${folder.key}/manifest.json`);
   const canvasId = joinUrl(resourceBaseUrl, `${folder.key}/canvas`);
-  const backgroundChoiceItems = backgrounds.map((image, index) =>
-    bodyForImage(imageApiBaseUrl, image, "background", `BG${index + 1}`),
+  const annotations = sortedImages.map((image, index) =>
+    annotationForImage(imageApiBaseUrl, canvasId, image, index, image.effectiveLabel ?? "other"),
   );
-  const backgroundAnnotations =
-    backgroundChoiceItems.length > 1
-      ? [
-          {
-            id: `${canvasId}/annotation/background-choice`,
-            type: "Annotation",
-            motivation: "painting",
-            body: {
-              type: "Choice",
-              items: backgroundChoiceItems,
-            },
-            target: canvasId,
-          },
-        ]
-      : backgrounds.map((image, index) => annotationForImage(imageApiBaseUrl, canvasId, image, index, "background"));
-  const annotations = [
-    ...backgroundAnnotations,
-    ...books.map((image, index) => annotationForImage(imageApiBaseUrl, canvasId, image, index, "book")),
-    ...frames.map((image, index) => annotationForImage(imageApiBaseUrl, canvasId, image, index, "frame")),
-    ...others.map((image, index) => annotationForImage(imageApiBaseUrl, canvasId, image, index, "other")),
-  ];
   const pages = [annotationPage(canvasId, "レイヤー", annotations)];
   const thumbnailSource = backgrounds[0];
 
@@ -745,6 +724,7 @@ export function IiifManifestBuilder() {
         backgroundCount: folderImages.filter((image) => image.effectiveLabel === "background").length,
         bookCount: folderImages.filter((image) => image.effectiveLabel === "book").length,
         frameCount: folderImages.filter((image) => image.effectiveLabel === "frame").length,
+        effectCount: folderImages.filter((image) => image.effectiveLabel === "effect").length,
         otherCount: folderImages.filter((image) => image.effectiveLabel === null).length,
       };
     });
@@ -1068,6 +1048,7 @@ export function IiifManifestBuilder() {
                     </span>
                     <span className="rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-sky-700">book {summary.bookCount}</span>
                     <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-amber-800">frame {summary.frameCount}</span>
+                    <span className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-rose-700">effect {summary.effectCount}</span>
                     <span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-zinc-600">名称 {summary.otherCount}</span>
                   </span>
                 </button>
@@ -1112,6 +1093,9 @@ export function IiifManifestBuilder() {
                   </span>
                   <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
                     frame {selectedSummary.frameCount}
+                  </span>
+                  <span className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700">
+                    effect {selectedSummary.effectCount}
                   </span>
                   <span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-zinc-600">
                     画像名 {selectedSummary.otherCount}
@@ -1168,6 +1152,7 @@ export function IiifManifestBuilder() {
                             <option value="background">background</option>
                             <option value="book">book</option>
                             <option value="frame">frame</option>
+                            <option value="effect">effect</option>
                             <option value="name">画像名</option>
                           </select>
                         </td>

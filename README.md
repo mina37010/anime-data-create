@@ -142,15 +142,15 @@ image_filename,layer,keyframe_number,x1,y1,x2,y2,paper_color,paper_color_other,l
 
 - 複数フォルダをフォルダ単位で読み込み
 - 親フォルダを選んだ場合も、中の複数子フォルダをmanifest単位として扱う
-- `background`、`book`、`frame` の正規表現マッピング
-- `BG1` / `bg2`、`book1`、`_f` / `_f2` などの命名を初期設定で判定
-- 画像ごとのラベルを `自動`、`background`、`book`、`frame`、`画像名` から手動変更
+- `background`、`book`、`frame`、`effect` の正規表現マッピング
+- `BG1` / `bg2`、`book1`、`_f` / `_f2`、`effect1` / `fx2` などの命名を初期設定で判定
+- 画像ごとのラベルを `自動`、`background`、`book`、`frame`、`effect`、`画像名` から手動変更
 - フォルダごとの manifest ラベル編集
 - フォルダ別・画像別に分類結果を色付き表示
 - 1 Canvas にすべての画像annotationを入れる
-- background が複数ある場合は、background画像を Choice として出力
+- Choiceを使用せず、相対パスの自然順を維持して画像ごとのannotationを出力
 - background 以外の annotation には `behavior: ["hidden"]` を付与
-- book / frame / その他は、該当画像がある場合だけmanifestに出力
+- book / frame / effect / その他は、該当画像がある場合だけmanifestに出力
 - サムネイルには background の1枚目を使用
 - 選択中フォルダの `manifest.json` 書き出し
 - 全件書き出しは `manifests.zip` として出力し、中に `フォルダ名/manifest.json` を作成
