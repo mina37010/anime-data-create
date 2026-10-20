@@ -526,7 +526,7 @@ function annotationsFromCsv(text: string): Annotation[] {
     const canOmitTimelinePosition = timelinePositionIsOptional(materialMark);
     const compositeInstructionFlag = isFlagOn(values.get("composite_instruction_flag"));
 
-    if (!imageFilename || (!canOmitTimelinePosition && (!layer || !keyframeNumber))) {
+    if (!imageFilename || (!canOmitTimelinePosition && !keyframeNumber)) {
       return [];
     }
 
@@ -929,11 +929,6 @@ export function LayoutRoughLabeler() {
     const layer = getLayerValue();
     const keyframeNumber = draft.keyframeNumber.trim();
     const canOmitTimelinePosition = timelinePositionIsOptional(draft.materialMark);
-    if (!canOmitTimelinePosition && !layer) {
-      setStatus("レイヤーを選択または入力してください。");
-      return null;
-    }
-
     if (!canOmitTimelinePosition && !keyframeNumber) {
       setStatus("番号を入力してください。");
       return null;

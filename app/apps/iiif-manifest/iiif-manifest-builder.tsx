@@ -111,6 +111,14 @@ function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+}
+
 function fileExtension(file: File) {
   return file.name.split(".").pop()?.toLowerCase() ?? "";
 }
@@ -462,7 +470,13 @@ function annotationPage(canvasId: string, label: string, items: Record<string, u
   };
 }
 
-function buildManifest(manifestBaseUrl: string, imageApiBaseUrl: string, folder: FolderRecord, folderImages: ImageWithLabel[]) {
+function buildManifest(
+  resourceBaseUrl: string,
+  manifestBaseUrl: string,
+  imageApiBaseUrl: string,
+  folder: FolderRecord,
+  folderImages: ImageWithLabel[],
+) {
   const sortedImages = sortImages(folderImages);
   const backgrounds = sortedImages.filter((image) => image.effectiveLabel === "background");
   const books = sortedImages.filter((image) => image.effectiveLabel === "book");
@@ -471,7 +485,7 @@ function buildManifest(manifestBaseUrl: string, imageApiBaseUrl: string, folder:
   const canvasWidth = Math.max(...sortedImages.map((image) => image.width), 1);
   const canvasHeight = Math.max(...sortedImages.map((image) => image.height), 1);
   const manifestId = joinUrl(manifestBaseUrl, `${folder.key}/manifest.json`);
-  const canvasId = joinUrl(manifestBaseUrl, `${folder.key}/canvas`);
+  const canvasId = joinUrl(resourceBaseUrl, `${folder.key}/canvas`);
   const backgroundChoiceItems = backgrounds.map((image, index) =>
     bodyForImage(imageApiBaseUrl, image, "background", `BG${index + 1}`),
   );
@@ -653,8 +667,11 @@ function createZipBlob(entries: ZipEntry[]) {
 
 export function IiifManifestBuilder() {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const addFolderInputRef = useRef<HTMLInputElement | null>(null);
   const imagesRef = useRef<ImageRecord[]>([]);
+  const folderButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [baseUrl, setBaseUrl] = useState("");
+  const [manifestBaseUrl, setManifestBaseUrl] = useState("");
   const [imageApiBaseUrl, setImageApiBaseUrl] = useState("");
   const [regexSettings, setRegexSettings] = useState<RegexSettings>(defaultRegexSettings);
   const [images, setImages] = useState<ImageRecord[]>([]);
@@ -673,6 +690,37 @@ export function IiifManifestBuilder() {
       imagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
     };
   }, []);
+
+  useEffect(() => {
+    function handleFolderNavigation(event: KeyboardEvent) {
+      if (
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+        || event.ctrlKey
+        || event.metaKey
+        || event.altKey
+        || isEditableTarget(event.target)
+        || folders.length === 0
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      setSelectedFolderKey((current) => {
+        const currentIndex = folders.findIndex((folder) => folder.key === current);
+        const fallbackIndex = currentIndex >= 0 ? currentIndex : 0;
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = Math.min(folders.length - 1, Math.max(0, fallbackIndex + direction));
+        return folders[nextIndex]?.key ?? current;
+      });
+    }
+
+    window.addEventListener("keydown", handleFolderNavigation);
+    return () => window.removeEventListener("keydown", handleFolderNavigation);
+  }, [folders]);
+
+  useEffect(() => {
+    folderButtonRefs.current.get(selectedFolderKey)?.scrollIntoView({ block: "nearest" });
+  }, [selectedFolderKey]);
 
   const compiledRegexes = useMemo(() => compileRegexSettings(regexSettings), [regexSettings]);
   const hasRegexError = compiledRegexes.some((item) => item.error);
@@ -708,9 +756,12 @@ export function IiifManifestBuilder() {
     : [];
   const selectedSummary = summaries.find((summary) => summary.folder.key === selectedFolder?.key) ?? null;
   const baseUrlReady = baseUrl.trim().length > 0;
+  const manifestBaseUrlReady = manifestBaseUrl.trim().length > 0;
   const imageApiBaseUrlReady = imageApiBaseUrl.trim().length > 0;
-  const manifestReady = baseUrlReady && imageApiBaseUrlReady;
-  const selectedManifest = selectedFolder && manifestReady ? buildManifest(baseUrl, imageApiBaseUrl, selectedFolder, selectedImages) : null;
+  const manifestReady = baseUrlReady && manifestBaseUrlReady && imageApiBaseUrlReady;
+  const selectedManifest = selectedFolder && manifestReady
+    ? buildManifest(baseUrl, manifestBaseUrl, imageApiBaseUrl, selectedFolder, selectedImages)
+    : null;
 
   async function replaceWithSourceFiles(sourceFiles: SourceImageFile[]) {
     const imageFiles = normalizeSourceFiles(sourceFiles).filter((source) => isImageFile(source.file));
@@ -740,9 +791,61 @@ export function IiifManifestBuilder() {
     }
   }
 
+  async function appendSourceFiles(sourceFiles: SourceImageFile[]) {
+    const imageFiles = normalizeSourceFiles(sourceFiles).filter((source) => isImageFile(source.file));
+    if (imageFiles.length === 0) {
+      setStatus("画像ファイルが見つかりませんでした。");
+      return;
+    }
+
+    const existingIds = new Set(imagesRef.current.map((image) => image.id));
+    const newIds = new Set<string>();
+    const newFiles = imageFiles.filter((source) => {
+      const id = `${source.relativePath}:${source.file.size}:${source.file.lastModified}`;
+      if (existingIds.has(id) || newIds.has(id)) {
+        return false;
+      }
+      newIds.add(id);
+      return true;
+    });
+
+    if (newFiles.length === 0) {
+      setStatus("選択したフォルダは読み込み済みです。");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("画像を追加しています。");
+    try {
+      const addedImages = await Promise.all(newFiles.map(createImageRecord));
+      const nextImages = sortImages([...imagesRef.current, ...addedImages]);
+      const folderLabels = new Map(folders.map((folder) => [folder.key, folder.label]));
+      const folderKeys = Array.from(new Set(nextImages.map((image) => image.folderKey))).sort((a, b) =>
+        naturalCollator.compare(a, b),
+      );
+      const nextFolders = folderKeys.map((key) => ({ key, label: folderLabels.get(key) ?? key }));
+
+      imagesRef.current = nextImages;
+      setImages(nextImages);
+      setFolders(nextFolders);
+      setSelectedFolderKey((current) => current || addedImages[0]?.folderKey || nextFolders[0]?.key || "");
+      setStatus(`${addedImages.length} 画像を追加しました。合計 ${nextFolders.length} フォルダ / ${nextImages.length} 画像。`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "画像の追加に失敗しました。");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
     const sourceFiles = Array.from(event.target.files ?? []).map(sourceFileFromInput);
     await replaceWithSourceFiles(sourceFiles);
+    event.target.value = "";
+  }
+
+  async function handleFolderAdd(event: ChangeEvent<HTMLInputElement>) {
+    const sourceFiles = Array.from(event.target.files ?? []).map(sourceFileFromInput);
+    await appendSourceFiles(sourceFiles);
     event.target.value = "";
   }
 
@@ -785,7 +888,7 @@ export function IiifManifestBuilder() {
 
   function downloadSelectedManifest() {
     if (!selectedFolder || !selectedManifest) {
-      setStatus("基底URL、IIIF Image API URL、フォルダを確認してください。");
+      setStatus("基底URL、Manifest URL、IIIF Image API URL、フォルダを確認してください。");
       return;
     }
     downloadJson("manifest.json", selectedManifest);
@@ -794,14 +897,14 @@ export function IiifManifestBuilder() {
 
   function downloadAllManifests() {
     if (!manifestReady || folders.length === 0) {
-      setStatus("基底URL、IIIF Image API URL、フォルダを確認してください。");
+      setStatus("基底URL、Manifest URL、IIIF Image API URL、フォルダを確認してください。");
       return;
     }
     const zipEntries = folders.map((folder) => {
       const folderImages = imagesWithLabels.filter((image) => image.folderKey === folder.key);
       return {
         path: `${zipPathSegment(folder.key)}/manifest.json`,
-        content: JSON.stringify(buildManifest(baseUrl, imageApiBaseUrl, folder, folderImages), null, 2),
+        content: JSON.stringify(buildManifest(baseUrl, manifestBaseUrl, imageApiBaseUrl, folder, folderImages), null, 2),
       };
     });
     downloadBlob("manifests.zip", createZipBlob(zipEntries));
@@ -844,17 +947,34 @@ export function IiifManifestBuilder() {
             className="hidden"
             onChange={handleFolderSelect}
           />
+          <input
+            ref={(node) => {
+              addFolderInputRef.current = node;
+              node?.setAttribute("webkitdirectory", "");
+              node?.setAttribute("directory", "");
+            }}
+            type="file"
+            multiple
+            accept={imageAccept}
+            className="hidden"
+            onChange={handleFolderAdd}
+          />
           <div className="grid gap-2">
-            <button className="primary-button" type="button" disabled={loading} onClick={() => folderInputRef.current?.click()}>
-              背景フォルダを読み込む
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="primary-button" type="button" disabled={loading} onClick={() => folderInputRef.current?.click()}>
+                フォルダを読み込む
+              </button>
+              <button className="control-button" type="button" disabled={loading} onClick={() => addFolderInputRef.current?.click()}>
+                フォルダを追加
+              </button>
+            </div>
             <div
               className={classNames(
                 "flex min-h-16 items-center justify-center rounded-md border border-dashed px-3 py-2 text-center text-sm font-semibold",
                 dragActive ? "border-blue-400 bg-blue-50 text-blue-700" : "border-zinc-300 bg-zinc-50 text-zinc-500",
               )}
             >
-              複数フォルダをドロップ
+              フォルダをまとめてドロップ
             </div>
             <div className="grid gap-1">
               <label className="field-label" htmlFor="iiif-base-url">
@@ -864,8 +984,20 @@ export function IiifManifestBuilder() {
                 id="iiif-base-url"
                 className="field-control"
                 value={baseUrl}
-                placeholder="https://example.com/iiif/manifests"
+                placeholder="https://example.com/iiif/resources"
                 onChange={(event) => setBaseUrl(event.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <label className="field-label" htmlFor="iiif-manifest-base-url">
+                Manifest URL
+              </label>
+              <input
+                id="iiif-manifest-base-url"
+                className="field-control"
+                value={manifestBaseUrl}
+                placeholder="https://example.com/iiif/manifests"
+                onChange={(event) => setManifestBaseUrl(event.target.value)}
               />
             </div>
             <div className="grid gap-1">
@@ -915,6 +1047,13 @@ export function IiifManifestBuilder() {
               summaries.map((summary) => (
                 <button
                   key={summary.folder.key}
+                  ref={(node) => {
+                    if (node) {
+                      folderButtonRefs.current.set(summary.folder.key, node);
+                    } else {
+                      folderButtonRefs.current.delete(summary.folder.key);
+                    }
+                  }}
                   type="button"
                   className={classNames(
                     "grid gap-2 rounded-md border p-2 text-left text-sm",
@@ -1044,7 +1183,9 @@ export function IiifManifestBuilder() {
               <div className="min-h-0 overflow-auto rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
                 <h2 className="text-sm font-semibold tracking-normal text-zinc-900">Manifest確認</h2>
                 <pre className="mt-2 max-h-[calc(100vh-15rem)] overflow-auto rounded-md bg-zinc-950 p-3 text-xs leading-5 text-zinc-50">
-                  {selectedManifest ? JSON.stringify(selectedManifest, null, 2) : "基底URLとIIIF Image API URLを入力してください。"}
+                  {selectedManifest
+                    ? JSON.stringify(selectedManifest, null, 2)
+                    : "基底URL、Manifest URL、IIIF Image API URLを入力してください。"}
                 </pre>
               </div>
             </div>

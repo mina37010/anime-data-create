@@ -315,6 +315,10 @@ function csvEscape(value: string | number) {
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function sanitizeFilenamePrefix(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, "_");
+}
+
 function annotationsFromCsv(text: string) {
   const rows = parseCsv(text);
   const header = rows[0] ?? [];
@@ -442,6 +446,7 @@ export function CutBagLabeler() {
   const [zoom, setZoom] = useState(100);
   const [panelSize, setPanelSize] = useState({ width: 0, height: 0 });
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [csvFilenamePrefix, setCsvFilenamePrefix] = useState("");
 
   useEffect(() => {
     imagesRef.current = images;
@@ -771,13 +776,15 @@ export function CutBagLabeler() {
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
+    const prefix = csvFilenamePrefix.trim().replace(/_+$/, "");
+    const filename = prefix ? `${prefix}_cut_bag.csv` : "cut_bag.csv";
     link.href = url;
-    link.download = "cut_bag.csv";
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setStatus("cut_bag.csv を書き出しました。");
+    setStatus(`${filename} を書き出しました。`);
   }
 
   return (
@@ -905,6 +912,23 @@ export function CutBagLabeler() {
       <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto pr-1">
         <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
+            <div className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-2">
+              <label className="field-label" htmlFor="cut-bag-csv-filename-prefix">
+                出力名
+              </label>
+              <div className="flex min-w-0 items-center overflow-hidden rounded-md border border-zinc-300 bg-white focus-within:border-zinc-900">
+                <input
+                  id="cut-bag-csv-filename-prefix"
+                  className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1.5 text-sm outline-none"
+                  value={csvFilenamePrefix}
+                  placeholder="C〇〇"
+                  onChange={(event) => setCsvFilenamePrefix(sanitizeFilenamePrefix(event.target.value))}
+                />
+                <span className="shrink-0 border-l border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500">
+                  _cut_bag.csv
+                </span>
+              </div>
+            </div>
             <label className="grid gap-1">
               <span className="field-label">プロパティ</span>
               <select

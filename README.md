@@ -133,7 +133,8 @@ image_filename,layer,keyframe_number,x1,y1,x2,y2,paper_color,paper_color_other,l
 
 入力:
 
-- `基底URL` - manifest、canvas、annotation の `id` に使うURL
+- `基底URL` - canvas、annotation、annotation page の `id` に使うURL
+- `Manifest URL` - manifest の `id` に使うURL
 - `IIIF Image API URL` - 画像bodyの `id` と ImageService3 の `service.id` に使うURL
 - 背景フォルダ - フォルダ選択、または複数フォルダのドラッグ&ドロップで読み込み
 
