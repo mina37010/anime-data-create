@@ -278,6 +278,22 @@ function classifyAnnotationForExport(annotation: Annotation): Classification {
   return classifyAnnotation(annotation);
 }
 
+function hasRoughKeyframeOrLayoutAtSameTiming(annotation: Annotation, annotations: Annotation[]) {
+  const layer = annotation.layer.trim();
+  const keyframeNumber = annotation.keyframeNumber.trim();
+  if (!layer || !keyframeNumber) {
+    return false;
+  }
+
+  return annotations.some(
+    (candidate) =>
+      candidate.id !== annotation.id &&
+      candidate.layer.trim() === layer &&
+      candidate.keyframeNumber.trim() === keyframeNumber &&
+      (candidate.materialMark === "rough_keyframe" || candidate.materialMark === "layout"),
+  );
+}
+
 function classificationLabel(classification: Classification) {
   if (classification.kind === "layout") {
     return "レイアウト";
@@ -920,6 +936,38 @@ export function LayoutRoughLabeler() {
     setDraft((previous) => ({ ...previous, compositeInstructionFlag }));
   }
 
+  function applyCorrectionsWithoutRoughKeyframe() {
+    let changedCount = 0;
+    const nextAnnotations = annotations.map((annotation) => {
+      if (
+        annotation.materialMark !== "correction_rough_keyframe" ||
+        hasRoughKeyframeOrLayoutAtSameTiming(annotation, annotations)
+      ) {
+        return annotation;
+      }
+
+      changedCount += 1;
+      return {
+        ...annotation,
+        materialMark: "rough_keyframe" as const,
+        blankPaperFlag: false,
+      };
+    });
+
+    if (changedCount === 0) {
+      setStatus("同じレイヤー・番号にラフ原画もレイアウトもない修正ラフ原画は見つかりませんでした。");
+      return;
+    }
+
+    setAnnotations(nextAnnotations);
+    const activeId = editingId ?? selectedId;
+    const activeAnnotation = activeId ? nextAnnotations.find((annotation) => annotation.id === activeId) : null;
+    if (activeAnnotation) {
+      setDraft(draftFromAnnotation(activeAnnotation));
+    }
+    setStatus(`${changedCount}件の修正ラフ原画をラフ原画に変更しました。タイムラインで確認できます。`);
+  }
+
   function buildAnnotation(): Annotation | null {
     if (!currentImage) {
       setStatus("ローカル画像フォルダを読み込んでください。画像はサーバーへ送信されません。");
@@ -1542,6 +1590,14 @@ export function LayoutRoughLabeler() {
                 CSVを書き出す
               </button>
             </div>
+            <button
+              className="control-button"
+              type="button"
+              onClick={applyCorrectionsWithoutRoughKeyframe}
+              disabled={annotations.length === 0}
+            >
+              ラフ原画なし修正をラフ原画へ適用
+            </button>
           </div>
           <div className="mt-2 flex items-center justify-between rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-600">
             <span><strong className="text-sm text-zinc-900">{images.length}</strong> 画像</span>
