@@ -202,6 +202,14 @@ function clampSheetName(value: string) {
   return (sanitized || "タイムシート").slice(0, 31);
 }
 
+function sanitizeFilenameStem(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, "_");
+}
+
+function workbookFilenameStem(fileName: string) {
+  return fileName.replace(/\.(xlsx|xlsm|xls)$/i, "");
+}
+
 function normalizeCells(cells: string[][], frameCount: number, layerCount: number) {
   return Array.from({ length: frameCount }, (_, rowIndex) =>
     Array.from({ length: layerCount }, (_, colIndex) => cells[rowIndex]?.[colIndex] ?? ""),
@@ -585,11 +593,11 @@ function parseTimesheet(raw: RawSheet): TimesheetData {
   };
 }
 
-function buildWorkbook(timesheet: TimesheetData) {
+function buildTimesheetRows(timesheet: TimesheetData) {
   const syncedTimesheet = synchronizeLayerNames(timesheet);
   const gengaSection = syncedTimesheet.sections.find((section) => section.id === "genga") ?? createSection("genga", "原画", syncedTimesheet.frameCount);
   const dougaSection = syncedTimesheet.sections.find((section) => section.id === "douga") ?? createSection("douga", "動画", syncedTimesheet.frameCount);
-  const rows = [
+  return [
     ["フレーム", ...gengaSection.layers, "フレーム", ...gengaSection.layers],
     ...Array.from({ length: syncedTimesheet.frameCount }, (_, rowIndex) => [
       rowIndex + 1,
@@ -598,6 +606,23 @@ function buildWorkbook(timesheet: TimesheetData) {
       ...dougaSection.layers.map((_, layerIndex) => dougaSection.cells[rowIndex]?.[layerIndex] ?? ""),
     ]),
   ];
+}
+
+function csvEscape(value: string | number) {
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function buildTimesheetCsv(timesheet: TimesheetData) {
+  const rows = buildTimesheetRows(timesheet);
+  return `\uFEFF${rows.map((row) => row.map(csvEscape).join(",")).join("\r\n")}\r\n`;
+}
+
+function buildWorkbook(timesheet: TimesheetData) {
+  const syncedTimesheet = synchronizeLayerNames(timesheet);
+  const gengaSection = syncedTimesheet.sections.find((section) => section.id === "genga") ?? createSection("genga", "原画", syncedTimesheet.frameCount);
+  const dougaSection = syncedTimesheet.sections.find((section) => section.id === "douga") ?? createSection("douga", "動画", syncedTimesheet.frameCount);
+  const rows = buildTimesheetRows(syncedTimesheet);
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
   worksheet["!cols"] = [
     { wch: 8 },
@@ -627,6 +652,7 @@ export function TimesheetEditor() {
   const [cellSelectionActive, setCellSelectionActive] = useState(false);
   const [workbookCandidates, setWorkbookCandidates] = useState<File[]>([]);
   const [selectedWorkbookKey, setSelectedWorkbookKey] = useState("");
+  const [outputFilenameStem, setOutputFilenameStem] = useState("");
   const [textNotes, setTextNotes] = useState("");
   const [status, setStatus] = useState("タイムシート入力アプリのフォルダを読み込んでください。");
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -639,6 +665,7 @@ export function TimesheetEditor() {
   );
   const safeDeleteLayerIndex = Math.min(deleteLayerIndex, Math.max(0, layerOptions.length - 1));
   const selectedWorkbookFile = workbookCandidates.find((file) => fileIdentity(file) === selectedWorkbookKey) ?? workbookCandidates[0] ?? null;
+  const csvFilenameSuffix = /_Timesheet$/i.test(outputFilenameStem.trim()) ? ".csv" : "_Timesheet.csv";
   const gengaLayerCount = timesheet.sections.find((section) => section.id === "genga")?.layers.length ?? 0;
   const selectedCellCount = useMemo(() => {
     if (!cellSelection) {
@@ -648,6 +675,22 @@ export function TimesheetEditor() {
     const colCount = Math.abs(cellSelection.anchor.colIndex - cellSelection.focus.colIndex) + 1;
     return rowCount * colCount;
   }, [cellSelection]);
+  const activeCell = cellSelection?.focus ?? null;
+  const activeCellSection = activeCell
+    ? timesheet.sections.find((section) => section.id === activeCell.sectionId)
+    : null;
+  const activeCellIsValid = Boolean(
+    activeCell &&
+    activeCellSection?.layers[activeCell.layerIndex] !== undefined &&
+    activeCell.rowIndex >= 0 &&
+    activeCell.rowIndex < timesheet.frameCount,
+  );
+  const activeCellValue = activeCell && activeCellIsValid
+    ? activeCellSection?.cells[activeCell.rowIndex]?.[activeCell.layerIndex] ?? ""
+    : "";
+  const activeCellLabel = activeCell && activeCellIsValid
+    ? `${activeCellSection?.label ?? ""} ${activeCellSection?.layers[activeCell.layerIndex] ?? "-"} ${activeCell.rowIndex + 1}F`
+    : "セル未選択";
 
   function syncDurationFromFrameCount(frameCount: number) {
     const nextSeconds = Math.floor(frameCount / frameRate);
@@ -705,6 +748,13 @@ export function TimesheetEditor() {
           : section,
       ),
     }));
+  }
+
+  function updateActiveCell(value: string) {
+    if (!activeCell || !activeCellIsValid) {
+      return;
+    }
+    updateCell(activeCell.sectionId, activeCell.rowIndex, activeCell.layerIndex, value);
   }
 
   function cellColumnIndex(sectionId: TimesheetSection["id"], layerIndex: number, baseGengaLayerCount = gengaLayerCount) {
@@ -1068,6 +1118,7 @@ export function TimesheetEditor() {
     const raw = await readRawSheet(workbookFile);
     const parsed = synchronizeLayerNames(raw ? parseTimesheet(raw) : createBlankTimesheet());
     setTimesheet(parsed);
+    setOutputFilenameStem(sanitizeFilenameStem(workbookFilenameStem(workbookFile.name)));
     syncDurationFromFrameCount(parsed.frameCount);
     setCellSelection(null);
     setCellSelectionActive(false);
@@ -1124,6 +1175,7 @@ export function TimesheetEditor() {
     } else {
       const blank = synchronizeLayerNames(createBlankTimesheet());
       setTimesheet(blank);
+      setOutputFilenameStem("");
       syncDurationFromFrameCount(blank.frameCount);
       setStatus(`${imageFiles.length}件の画像を読み込みました。XLSXがないため0Fから新規作成しました。`);
     }
@@ -1138,8 +1190,25 @@ export function TimesheetEditor() {
 
   function downloadXlsx() {
     const workbook = buildWorkbook(timesheet);
-    XLSX.writeFile(workbook, `${clampSheetName(timesheet.title)}.xlsx`);
-    setStatus(`${clampSheetName(timesheet.title)}.xlsx を書き出しました。`);
+    const requestedStem = outputFilenameStem.trim().replace(/\.xlsx$/i, "");
+    const filenameStem = sanitizeFilenameStem(requestedStem || clampSheetName(timesheet.title)).trim() || "タイムシート";
+    const filename = `${filenameStem}.xlsx`;
+    XLSX.writeFile(workbook, filename);
+    setStatus(`${filename} を書き出しました。`);
+  }
+
+  function downloadCsv() {
+    const requestedStem = outputFilenameStem.trim().replace(/\.(xlsx|csv)$/i, "");
+    const baseStem = sanitizeFilenameStem(requestedStem || clampSheetName(timesheet.title)).trim() || "タイムシート";
+    const filenameStem = /_Timesheet$/i.test(baseStem) ? baseStem : `${baseStem}_Timesheet`;
+    const filename = `${filenameStem}.csv`;
+    const url = URL.createObjectURL(new Blob([buildTimesheetCsv(timesheet)], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus(`${filename} を書き出しました。`);
   }
 
   function handlePopupPointerDown(event: PointerEvent<HTMLElement>) {
@@ -1224,7 +1293,7 @@ export function TimesheetEditor() {
               onChange={(event) => setCellZoom(Number(event.target.value))}
             />
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <input
               ref={(node) => {
                 folderInputRef.current = node;
@@ -1242,6 +1311,9 @@ export function TimesheetEditor() {
             </button>
             <button className="primary-button" type="button" onClick={downloadXlsx}>
               XLSX
+            </button>
+            <button className="primary-button" type="button" onClick={downloadCsv}>
+              CSV
             </button>
           </div>
         </div>
@@ -1276,6 +1348,25 @@ export function TimesheetEditor() {
           <button className="primary-button" type="button" onClick={applyGengaConversion}>
             原画変換
           </button>
+          <div className="flex min-w-[220px] items-center gap-1.5">
+            <label className="field-label shrink-0" htmlFor="timesheet-output-filename">
+              出力名
+            </label>
+            <div className="flex min-w-0 flex-1 items-center overflow-hidden rounded border border-zinc-300 bg-white focus-within:border-zinc-900">
+              <input
+                id="timesheet-output-filename"
+                className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm outline-none"
+                value={outputFilenameStem}
+                placeholder="C〇〇"
+                onChange={(event) =>
+                  setOutputFilenameStem(sanitizeFilenameStem(event.target.value).replace(/\.(xlsx|csv)$/i, ""))
+                }
+              />
+              <span className="shrink-0 border-l border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500" title="CSV出力名">
+                {csvFilenameSuffix}
+              </span>
+            </div>
+          </div>
           {textNotes ? (
             <div className="max-h-16 min-w-[220px] max-w-xl overflow-auto rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs leading-relaxed whitespace-pre-wrap text-zinc-800">
               {textNotes}
@@ -1304,6 +1395,23 @@ export function TimesheetEditor() {
               画像表示
             </button>
           ) : null}
+        </div>
+
+        <div className="mb-2 grid grid-cols-[minmax(112px,auto)_minmax(0,1fr)] overflow-hidden rounded border border-zinc-300 bg-white focus-within:border-zinc-900">
+          <div
+            className="flex min-h-9 items-center border-r border-zinc-300 bg-zinc-50 px-2 text-xs font-semibold text-zinc-700"
+            title={activeCellLabel}
+          >
+            {activeCellLabel}
+          </div>
+          <input
+            className="min-h-9 min-w-0 border-0 bg-white px-3 text-sm text-zinc-900 outline-none disabled:bg-zinc-50 disabled:text-zinc-400"
+            value={activeCellValue}
+            disabled={!activeCellIsValid}
+            aria-label="選択セルの内容"
+            placeholder="セルを選択"
+            onChange={(event) => updateActiveCell(event.target.value)}
+          />
         </div>
 
         <div
@@ -1408,7 +1516,6 @@ export function TimesheetEditor() {
                                 selected ? "bg-blue-100 ring-1 ring-inset ring-blue-500" : "bg-white",
                               )}
                               style={{ width: `${cellWidth}px`, height: `${cellHeight}px`, fontSize: `${cellFontSize}px` }}
-                              maxLength={6}
                               value={section.cells[rowIndex]?.[layerIndex] ?? ""}
                               onCommit={(value) => updateCell(section.id, rowIndex, layerIndex, value)}
                               cellCoordinate={cell}
@@ -1474,7 +1581,6 @@ function CommitInput({
   value,
   className,
   style,
-  maxLength,
   onCommit,
   cellCoordinate,
   onFocusCell,
@@ -1482,7 +1588,6 @@ function CommitInput({
   value: string;
   className: string;
   style?: CSSProperties;
-  maxLength?: number;
   onCommit: (value: string) => void;
   cellCoordinate?: TimesheetCellCoordinate;
   onFocusCell?: (cell: TimesheetCellCoordinate) => void;
@@ -1521,7 +1626,6 @@ function CommitInput({
     <input
       className={className}
       style={style}
-      maxLength={maxLength}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={handleBlur}

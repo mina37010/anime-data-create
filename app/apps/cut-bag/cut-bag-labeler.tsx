@@ -950,18 +950,33 @@ export function CutBagLabeler() {
             </label>
             <label className="grid gap-1">
               <span className="field-label">値</span>
-              <input
-                className="field-control"
-                list={shouldShowStaffCandidates ? "cut-bag-staff-candidates" : undefined}
-                value={draft.value}
-                onChange={(event) => setDraft((previous) => ({ ...previous, value: event.target.value }))}
-                onKeyDown={(event) => {
-                  if (event.ctrlKey && event.key === "Enter") {
-                    event.preventDefault();
-                    saveDraft(false);
-                  }
-                }}
-              />
+              {draft.propertyKey === "memo" ? (
+                <textarea
+                  className="field-control min-h-32 resize-y py-2 leading-6"
+                  rows={5}
+                  value={draft.value}
+                  onChange={(event) => setDraft((previous) => ({ ...previous, value: event.target.value }))}
+                  onKeyDown={(event) => {
+                    if (event.ctrlKey && event.key === "Enter") {
+                      event.preventDefault();
+                      saveDraft(false);
+                    }
+                  }}
+                />
+              ) : (
+                <input
+                  className="field-control"
+                  list={shouldShowStaffCandidates ? "cut-bag-staff-candidates" : undefined}
+                  value={draft.value}
+                  onChange={(event) => setDraft((previous) => ({ ...previous, value: event.target.value }))}
+                  onKeyDown={(event) => {
+                    if (event.ctrlKey && event.key === "Enter") {
+                      event.preventDefault();
+                      saveDraft(false);
+                    }
+                  }}
+                />
+              )}
             </label>
             <datalist id="cut-bag-staff-candidates">
               {staffCandidateValues.map((value) => (
