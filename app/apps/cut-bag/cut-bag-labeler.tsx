@@ -198,6 +198,13 @@ function isStaffProperty(propertyKey: CutBagPropertyKey) {
   return roleKeywordsForProperty(propertyKey).length > 0;
 }
 
+function staffRoleGroupForProperty(propertyKey: CutBagPropertyKey): "drawing" | "postproduction" | null {
+  if (["key_animation_staff", "inbetween_staff", "animation_check_director"].includes(propertyKey)) {
+    return "drawing";
+  }
+  return isStaffProperty(propertyKey) ? "postproduction" : null;
+}
+
 function staffMatchesProperty(staff: StaffMember, propertyKey: CutBagPropertyKey) {
   const keywords = roleKeywordsForProperty(propertyKey).map((keyword) => keyword.toLowerCase());
   if (keywords.length === 0) {
@@ -207,6 +214,25 @@ function staffMatchesProperty(staff: StaffMember, propertyKey: CutBagPropertyKey
     const normalizedRole = role.toLowerCase();
     return keywords.some((keyword) => normalizedRole.includes(keyword));
   });
+}
+
+function staffCanAppearInPropertySearch(staff: StaffMember, propertyKey: CutBagPropertyKey) {
+  if (staffMatchesProperty(staff, propertyKey)) {
+    return true;
+  }
+
+  const currentGroup = staffRoleGroupForProperty(propertyKey);
+  if (!currentGroup) {
+    return true;
+  }
+
+  const knownGroups = new Set(
+    cutBagProperties.flatMap((property) => {
+      const group = staffRoleGroupForProperty(property.key);
+      return group && staffMatchesProperty(staff, property.key) ? [group] : [];
+    }),
+  );
+  return knownGroups.size === 0 || knownGroups.has(currentGroup);
 }
 
 function staffValueCandidatesForStaff(staff: StaffMember): StaffValueCandidate[] {
@@ -537,8 +563,9 @@ export function CutBagLabeler() {
   }, [draft.propertyKey, staffMembers]);
   const staffValueCandidates = useMemo(() => {
     const roleMatchedCandidates = uniqueStaffValueCandidates(staffCandidates.flatMap(staffValueCandidatesForStaff));
-    const allCandidates = uniqueStaffValueCandidates(
+    const searchableCandidates = uniqueStaffValueCandidates(
       staffMembers
+        .filter((staff) => staffCanAppearInPropertySearch(staff, draft.propertyKey))
         .flatMap(staffValueCandidatesForStaff)
         .sort((a, b) => naturalCollator.compare(a.value, b.value)),
     );
@@ -548,8 +575,8 @@ export function CutBagLabeler() {
       return roleMatchedCandidates;
     }
 
-    return allCandidates.filter((candidate) => normalizeCandidateText(candidate.value).includes(input));
-  }, [draft.value, staffCandidates, staffMembers]);
+    return searchableCandidates.filter((candidate) => normalizeCandidateText(candidate.value).includes(input));
+  }, [draft.propertyKey, draft.value, staffCandidates, staffMembers]);
   const staffCandidateValues = useMemo(() => staffValueCandidates.map((candidate) => candidate.value), [staffValueCandidates]);
   const shouldShowStaffCandidates = staffMembers.length > 0 && isStaffProperty(draft.propertyKey);
   const fitScale = currentImage
