@@ -91,6 +91,10 @@ function isWorkbookFile(file: File) {
   return xlsxExtensions.has(fileExtension(file));
 }
 
+function isCsvFile(file: File) {
+  return fileExtension(file) === "csv";
+}
+
 function isTextFile(file: File) {
   return fileExtension(file) === "txt";
 }
@@ -207,7 +211,7 @@ function sanitizeFilenameStem(value: string) {
 }
 
 function workbookFilenameStem(fileName: string) {
-  return fileName.replace(/\.(xlsx|xlsm|xls)$/i, "");
+  return fileName.replace(/\.(xlsx|xlsm|xls|csv)$/i, "");
 }
 
 function normalizeCells(cells: string[][], frameCount: number, layerCount: number) {
@@ -483,6 +487,13 @@ function rawFromWorkbookXml(buffer: ArrayBuffer): RawSheet | null {
 }
 
 async function readRawSheet(file: File): Promise<RawSheet | null> {
+  if (isCsvFile(file)) {
+    const workbook = XLSX.read(await file.text(), { type: "string", raw: true });
+    const sheetName = workbook.SheetNames[0] ?? "タイムシート";
+    const sheet = workbook.Sheets[sheetName] ?? workbook.Sheets[Object.keys(workbook.Sheets)[0]];
+    return sheet ? sheetToRaw(sheetName, sheet) : null;
+  }
+
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array" });
   const sheetName = workbook.SheetNames[0] ?? "タイムシート";
@@ -608,16 +619,6 @@ function buildTimesheetRows(timesheet: TimesheetData) {
   ];
 }
 
-function csvEscape(value: string | number) {
-  const text = String(value);
-  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-function buildTimesheetCsv(timesheet: TimesheetData) {
-  const rows = buildTimesheetRows(timesheet);
-  return `\uFEFF${rows.map((row) => row.map(csvEscape).join(",")).join("\r\n")}\r\n`;
-}
-
 function buildWorkbook(timesheet: TimesheetData) {
   const syncedTimesheet = synchronizeLayerNames(timesheet);
   const gengaSection = syncedTimesheet.sections.find((section) => section.id === "genga") ?? createSection("genga", "原画", syncedTimesheet.frameCount);
@@ -656,6 +657,7 @@ export function TimesheetEditor() {
   const [textNotes, setTextNotes] = useState("");
   const [status, setStatus] = useState("タイムシート入力アプリのフォルダを読み込んでください。");
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
   const skipCellFocusSelectionRef = useRef(false);
 
   const selectedImages = useMemo(() => images.filter((image) => image.selected), [images]);
@@ -665,7 +667,7 @@ export function TimesheetEditor() {
   );
   const safeDeleteLayerIndex = Math.min(deleteLayerIndex, Math.max(0, layerOptions.length - 1));
   const selectedWorkbookFile = workbookCandidates.find((file) => fileIdentity(file) === selectedWorkbookKey) ?? workbookCandidates[0] ?? null;
-  const csvFilenameSuffix = /_Timesheet$/i.test(outputFilenameStem.trim()) ? ".csv" : "_Timesheet.csv";
+  const xlsxFilenameSuffix = /_Timesheet$/i.test(outputFilenameStem.trim()) ? ".xlsx" : "_Timesheet.xlsx";
   const gengaLayerCount = timesheet.sections.find((section) => section.id === "genga")?.layers.length ?? 0;
   const selectedCellCount = useMemo(() => {
     if (!cellSelection) {
@@ -1132,6 +1134,23 @@ export function TimesheetEditor() {
     await loadWorkbookFile(selectedWorkbookFile, images.length);
   }
 
+  async function handleCsvSelect(event: ChangeEvent<HTMLInputElement>) {
+    const csvFile = Array.from(event.target.files ?? []).find(isCsvFile);
+    event.target.value = "";
+    if (!csvFile) {
+      return;
+    }
+
+    try {
+      setWorkbookCandidates([]);
+      setSelectedWorkbookKey("");
+      await loadWorkbookFile(csvFile, images.length);
+    } catch (error) {
+      console.error(error);
+      setStatus(`${csvFile.name} を読み込めませんでした。`);
+    }
+  }
+
   async function handleFolderSelect(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     const workbookFiles = files.filter(isWorkbookFile).sort((a, b) => fileDisplayName(a).localeCompare(fileDisplayName(b), "ja"));
@@ -1190,24 +1209,11 @@ export function TimesheetEditor() {
 
   function downloadXlsx() {
     const workbook = buildWorkbook(timesheet);
-    const requestedStem = outputFilenameStem.trim().replace(/\.xlsx$/i, "");
-    const filenameStem = sanitizeFilenameStem(requestedStem || clampSheetName(timesheet.title)).trim() || "タイムシート";
+    const requestedStem = outputFilenameStem.trim().replace(/\.(xlsx|csv)$/i, "");
+    const baseStem = sanitizeFilenameStem(requestedStem || clampSheetName(timesheet.title)).trim() || "Timesheet";
+    const filenameStem = /_Timesheet$/i.test(baseStem) ? baseStem : `${baseStem}_Timesheet`;
     const filename = `${filenameStem}.xlsx`;
     XLSX.writeFile(workbook, filename);
-    setStatus(`${filename} を書き出しました。`);
-  }
-
-  function downloadCsv() {
-    const requestedStem = outputFilenameStem.trim().replace(/\.(xlsx|csv)$/i, "");
-    const baseStem = sanitizeFilenameStem(requestedStem || clampSheetName(timesheet.title)).trim() || "タイムシート";
-    const filenameStem = /_Timesheet$/i.test(baseStem) ? baseStem : `${baseStem}_Timesheet`;
-    const filename = `${filenameStem}.csv`;
-    const url = URL.createObjectURL(new Blob([buildTimesheetCsv(timesheet)], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(url);
     setStatus(`${filename} を書き出しました。`);
   }
 
@@ -1306,14 +1312,21 @@ export function TimesheetEditor() {
               accept="image/*,.tif,.tiff,.xlsx,.xlsm,.xls,.txt"
               onChange={handleFolderSelect}
             />
+            <input
+              ref={csvInputRef}
+              type="file"
+              className="hidden"
+              accept=".csv,text/csv"
+              onChange={handleCsvSelect}
+            />
             <button className="control-button" type="button" onClick={() => folderInputRef.current?.click()}>
               フォルダ
             </button>
             <button className="primary-button" type="button" onClick={downloadXlsx}>
               XLSX
             </button>
-            <button className="primary-button" type="button" onClick={downloadCsv}>
-              CSV
+            <button className="control-button" type="button" onClick={() => csvInputRef.current?.click()}>
+              CSV読込
             </button>
           </div>
         </div>
@@ -1362,8 +1375,8 @@ export function TimesheetEditor() {
                   setOutputFilenameStem(sanitizeFilenameStem(event.target.value).replace(/\.(xlsx|csv)$/i, ""))
                 }
               />
-              <span className="shrink-0 border-l border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500" title="CSV出力名">
-                {csvFilenameSuffix}
+              <span className="shrink-0 border-l border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-500" title="XLSX出力名">
+                {xlsxFilenameSuffix}
               </span>
             </div>
           </div>
