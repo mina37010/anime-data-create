@@ -1721,11 +1721,6 @@ export function KeyframeLabeler() {
                   value={draft.keyframeNumber}
                   disabled={locked}
                   onChange={(event) => setDraft((previous) => ({ ...previous, keyframeNumber: event.target.value }))}
-                  onKeyDown={(event) => {
-                    if (event.ctrlKey && !event.metaKey && event.key === "Enter" && canSave) {
-                      saveDraft("stay");
-                    }
-                  }}
                 />
               </div>
             </div>
