@@ -27,6 +27,9 @@ image_filename,layer,keyframe_number,fix_flag,x1,y1,x2,y2,colored_paper_flag,pap
 - `tif` / `tiff` を含む画像ファイルの読み込み
 - 画像の順送り、前後移動
 - テキスト入力式のレイヤー、番号、資料種別、色
+- 領域ごとに番号、テキスト、ツメ指示を切り替えて入力
+- テキストとツメ指示では資料種別・色・合成指示を使用しない
+- CSVの `input_type`、`text`、`peg_instruction_flag` に入力種別を出力
 - 資料種別は修正、参考、関連資料(その他)、白紙をラジオボタンで排他入力
 - 色は白、ピンク、黄、その他をラジオボタンで排他入力し、その他は自由入力
 - 資料種別が原画かつ白以外の色で同じレイヤー番号の別画像がある場合は修正、なければ中割り参考として推定
@@ -69,6 +72,10 @@ image_filename,layer,keyframe_number,fix_flag,x1,y1,x2,y2,colored_paper_flag,pap
 ## レイアウト・ラフ原画入力
 
 原画キーフレーム入力と同じ画面構成で、レイアウト・ラフ原画用の注釈 CSV を作成します。
+
+- 領域ごとに番号、テキスト、ツメ指示を切り替えて入力
+- テキストとツメ指示では資料種別・色・合成指示を使用しない
+- CSVの `input_type`、`text`、`peg_instruction_flag` に入力種別を出力
 フォルダ内に `layout_rough.csv` などの CSV がある場合は、画像と同時に読み込みます。
 
 CSV カラム:

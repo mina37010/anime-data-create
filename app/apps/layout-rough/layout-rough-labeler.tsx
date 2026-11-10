@@ -25,6 +25,9 @@ const csvColumns = [
   "composite_instruction_flag",
   "material_type",
   "classification",
+  "input_type",
+  "text",
+  "peg_instruction_flag",
 ] as const;
 const imageAccept = "image/*,.tif,.tiff,.csv";
 const layerOptions = ["A", "B", "C", "D", "E", "F"];
@@ -50,6 +53,8 @@ type Annotation = {
   imageFilename: string;
   layer: string;
   keyframeNumber: string;
+  inputType: RegionInputType;
+  text: string;
   paperColor: PaperColor;
   paperColorOther: string;
   materialMark: MaterialMark;
@@ -66,6 +71,8 @@ type ImageSize = {
 type Draft = {
   layer: string;
   keyframeNumber: string;
+  inputType: RegionInputType;
+  text: string;
   paperColor: PaperColor;
   paperColorOther: string;
   materialMark: MaterialMark;
@@ -89,6 +96,7 @@ type MaterialMark =
   | "assembly_instruction"
   | "blank_paper";
 type PaperColor = "none" | "white" | "pink" | "yellow" | "other";
+type RegionInputType = "number" | "text" | "peg_instruction";
 
 type TimelineEntry = {
   annotation: Annotation;
@@ -109,6 +117,8 @@ type TimelineRow = {
 const initialDraft: Draft = {
   layer: "A",
   keyframeNumber: "",
+  inputType: "number",
+  text: "",
   paperColor: "white",
   paperColorOther: "",
   materialMark: "layout",
@@ -279,6 +289,9 @@ function classifyAnnotationForExport(annotation: Annotation): Classification {
 }
 
 function hasRoughKeyframeOrLayoutAtSameTiming(annotation: Annotation, annotations: Annotation[]) {
+  if (annotation.inputType !== "number") {
+    return false;
+  }
   const layer = annotation.layer.trim();
   const keyframeNumber = annotation.keyframeNumber.trim();
   if (!layer || !keyframeNumber) {
@@ -288,6 +301,7 @@ function hasRoughKeyframeOrLayoutAtSameTiming(annotation: Annotation, annotation
   return annotations.some(
     (candidate) =>
       candidate.id !== annotation.id &&
+      candidate.inputType === "number" &&
       candidate.layer.trim() === layer &&
       candidate.keyframeNumber.trim() === keyframeNumber &&
       (candidate.materialMark === "rough_keyframe" || candidate.materialMark === "layout"),
@@ -325,6 +339,7 @@ function materialTypeLabel(classification: Classification) {
 
 function timelineRowLabel(annotation: Annotation, classification: Classification) {
   if (
+    annotation.inputType !== "number" ||
     annotation.compositeInstructionFlag ||
     classification.kind === "blank_paper" ||
     classification.kind === "book" ||
@@ -357,10 +372,44 @@ function timelineColumnLabel(annotation: Annotation, rowLabel: string) {
   if (rowLabel !== "その他") {
     return annotation.keyframeNumber.trim() || "未設定";
   }
+  if (annotation.inputType === "text") {
+    return annotation.text.trim() || "テキスト";
+  }
+  if (annotation.inputType === "peg_instruction") {
+    return "ツメ指示";
+  }
   if (annotation.compositeInstructionFlag) {
     return "合成指示";
   }
   return annotation.keyframeNumber.trim() || "未設定";
+}
+
+function regionInputTypeFromCsv(values: Map<string, string>): RegionInputType {
+  const inputType = values.get("input_type")?.trim();
+  if (inputType === "number" || inputType === "text" || inputType === "peg_instruction") {
+    return inputType;
+  }
+  if (isFlagOn(values.get("peg_instruction_flag"))) {
+    return "peg_instruction";
+  }
+  if (values.get("text")?.trim()) {
+    return "text";
+  }
+  return "number";
+}
+
+function regionInputLabel(annotation: Pick<Annotation, "inputType" | "text" | "layer" | "keyframeNumber">) {
+  if (annotation.inputType === "text") {
+    return annotation.text.trim() || "テキスト";
+  }
+  if (annotation.inputType === "peg_instruction") {
+    return "ツメ指示";
+  }
+  return `${annotation.layer || "-"} / ${annotation.keyframeNumber || "-"}`;
+}
+
+function regionInputTypeLabel(inputType: RegionInputType) {
+  return inputType === "text" ? "テキスト" : inputType === "peg_instruction" ? "ツメ指示" : "番号";
 }
 
 function buildTimelineRows(annotations: Annotation[], images: ImageEntry[]): TimelineRow[] {
@@ -537,9 +586,11 @@ function annotationsFromCsv(text: string): Annotation[] {
     const imageFilename = values.get("image_filename")?.trim() ?? "";
     const layer = values.get("layer")?.trim() ?? "";
     const keyframeNumber = values.get("keyframe_number")?.trim() ?? "";
+    const inputType = regionInputTypeFromCsv(values);
+    const text = values.get("text")?.trim() ?? "";
     const coloredPaperFlag = isFlagOn(values.get("colored_paper_flag"));
     const materialMark = materialMarkFromCsv(values);
-    const canOmitTimelinePosition = timelinePositionIsOptional(materialMark);
+    const canOmitTimelinePosition = timelinePositionIsOptional(materialMark) || inputType !== "number";
     const compositeInstructionFlag = isFlagOn(values.get("composite_instruction_flag"));
 
     if (!imageFilename || (!canOmitTimelinePosition && !keyframeNumber)) {
@@ -561,13 +612,15 @@ function annotationsFromCsv(text: string): Annotation[] {
       {
         id: `csv-${Date.now()}-${index}`,
         imageFilename,
-        layer,
-        keyframeNumber,
-        paperColor: paperColorFromCsv(values.get("paper_color"), coloredPaperFlag),
-        paperColorOther: values.get("paper_color_other")?.trim() ?? "",
-        materialMark,
-        blankPaperFlag: materialMark === "blank_paper",
-        compositeInstructionFlag,
+        layer: inputType === "number" ? layer : "",
+        keyframeNumber: inputType === "number" ? keyframeNumber : "",
+        inputType,
+        text,
+        paperColor: inputType === "number" ? paperColorFromCsv(values.get("paper_color"), coloredPaperFlag) : "none",
+        paperColorOther: inputType === "number" ? values.get("paper_color_other")?.trim() ?? "" : "",
+        materialMark: inputType === "number" ? materialMark : "layout",
+        blankPaperFlag: inputType === "number" && materialMark === "blank_paper",
+        compositeInstructionFlag: inputType === "number" && compositeInstructionFlag,
         bbox: normalizeBbox(bbox),
       },
     ];
@@ -580,6 +633,7 @@ function annotationsToCsv(annotations: Annotation[]) {
     ...annotations.map((annotation) => {
       const bbox = normalizeBbox(annotation.bbox);
       const classification = classifyAnnotationForExport(annotation);
+      const hasMaterialMetadata = annotation.inputType === "number";
       return [
         annotation.imageFilename,
         annotation.layer,
@@ -588,19 +642,22 @@ function annotationsToCsv(annotations: Annotation[]) {
         bbox?.y1 ?? "",
         bbox?.x2 ?? "",
         bbox?.y2 ?? "",
-        annotation.paperColor === "none" ? "" : annotation.paperColor,
-        annotation.paperColorOther,
-        classification.kind === "layout" ? "1" : "0",
-        classification.kind === "correction_layout" ? "1" : "0",
-        classification.kind === "rough_keyframe" ? "1" : "0",
-        classification.kind === "correction_rough_keyframe" ? "1" : "0",
-        classification.kind === "reference" ? "1" : "0",
-        classification.kind === "book" ? "1" : "0",
-        classification.kind === "assembly_instruction" ? "1" : "0",
-        classification.kind === "blank_paper" ? "1" : "0",
-        annotation.compositeInstructionFlag ? "1" : "0",
-        materialTypeLabel(classification),
-        classification.kind,
+        hasMaterialMetadata && annotation.paperColor !== "none" ? annotation.paperColor : "",
+        hasMaterialMetadata ? annotation.paperColorOther : "",
+        hasMaterialMetadata && classification.kind === "layout" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "correction_layout" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "rough_keyframe" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "correction_rough_keyframe" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "reference" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "book" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "assembly_instruction" ? "1" : "0",
+        hasMaterialMetadata && classification.kind === "blank_paper" ? "1" : "0",
+        hasMaterialMetadata && annotation.compositeInstructionFlag ? "1" : "0",
+        hasMaterialMetadata ? materialTypeLabel(classification) : "",
+        hasMaterialMetadata ? classification.kind : "",
+        annotation.inputType,
+        annotation.inputType === "text" ? annotation.text : "",
+        annotation.inputType === "peg_instruction" ? "1" : "0",
       ]
         .map(csvEscape)
         .join(",");
@@ -614,6 +671,8 @@ function draftFromAnnotation(annotation: Annotation): Draft {
   return {
     layer: annotation.layer,
     keyframeNumber: annotation.keyframeNumber,
+    inputType: annotation.inputType,
+    text: annotation.text,
     paperColor: annotation.paperColor,
     paperColorOther: annotation.paperColorOther,
     materialMark: annotation.materialMark,
@@ -644,6 +703,7 @@ export function LayoutRoughLabeler() {
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const layerInputRef = useRef<HTMLInputElement | null>(null);
   const keyframeInputRef = useRef<HTMLInputElement | null>(null);
+  const textInputRef = useRef<HTMLTextAreaElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -812,6 +872,8 @@ export function LayoutRoughLabeler() {
       setDraft((previous) => ({
         ...previous,
         keyframeNumber: "",
+        inputType: "number",
+        text: "",
         paperColor: "white",
         paperColorOther: "",
         materialMark: "layout",
@@ -838,6 +900,8 @@ export function LayoutRoughLabeler() {
       setDraft((previous) => ({
         ...previous,
         keyframeNumber: "",
+        inputType: "number",
+        text: "",
         paperColor: "white",
         paperColorOther: "",
         materialMark: "layout",
@@ -920,26 +984,56 @@ export function LayoutRoughLabeler() {
   }
 
   function updateMaterialMark(mark: MaterialMark) {
+    if (draft.inputType !== "number") return;
     const flags = draftFlagsFromMaterialMark(mark);
     setDraft((previous) => ({ ...previous, ...flags }));
   }
 
   function updatePaperColor(paperColor: PaperColor) {
+    if (draft.inputType !== "number") return;
     setDraft((previous) => ({ ...previous, paperColor }));
   }
 
   function updatePaperColorOther(paperColorOther: string) {
+    if (draft.inputType !== "number") return;
     setDraft((previous) => ({ ...previous, paperColorOther }));
   }
 
   function updateCompositeInstructionFlag(compositeInstructionFlag: boolean) {
+    if (draft.inputType !== "number") return;
     setDraft((previous) => ({ ...previous, compositeInstructionFlag }));
+  }
+
+  function updateRegionInputType(inputType: RegionInputType) {
+    setDraft((previous) => inputType === "number"
+      ? {
+          ...previous,
+          inputType,
+          paperColor: previous.inputType === "number" ? previous.paperColor : "white",
+        }
+      : {
+          ...previous,
+          inputType,
+          paperColor: "none",
+          paperColorOther: "",
+          materialMark: "layout",
+          blankPaperFlag: false,
+          compositeInstructionFlag: false,
+        });
+    window.setTimeout(() => {
+      if (inputType === "number") {
+        layerInputRef.current?.focus();
+      } else if (inputType === "text") {
+        textInputRef.current?.focus();
+      }
+    }, 0);
   }
 
   function applyCorrectionsWithoutRoughKeyframe() {
     let changedCount = 0;
     const nextAnnotations = annotations.map((annotation) => {
       if (
+        annotation.inputType !== "number" ||
         annotation.materialMark !== "correction_rough_keyframe" ||
         hasRoughKeyframeOrLayoutAtSameTiming(annotation, annotations)
       ) {
@@ -976,22 +1070,30 @@ export function LayoutRoughLabeler() {
 
     const layer = getLayerValue();
     const keyframeNumber = draft.keyframeNumber.trim();
-    const canOmitTimelinePosition = timelinePositionIsOptional(draft.materialMark);
+    const text = draft.text.trim();
+    const canOmitTimelinePosition = timelinePositionIsOptional(draft.materialMark) || draft.inputType !== "number";
     if (!canOmitTimelinePosition && !keyframeNumber) {
       setStatus("番号を入力してください。");
+      return null;
+    }
+
+    if (draft.inputType === "text" && !text) {
+      setStatus("テキストを入力してください。");
       return null;
     }
 
     return {
       id: editingId ?? `annotation-${Date.now()}`,
       imageFilename: currentImage.name,
-      layer,
-      keyframeNumber,
-      paperColor: draft.paperColor,
-      paperColorOther: draft.paperColorOther.trim(),
-      materialMark: draft.materialMark,
-      blankPaperFlag: draft.blankPaperFlag,
-      compositeInstructionFlag: draft.compositeInstructionFlag,
+      layer: draft.inputType === "number" ? layer : "",
+      keyframeNumber: draft.inputType === "number" ? keyframeNumber : "",
+      inputType: draft.inputType,
+      text: draft.inputType === "text" ? text : "",
+      paperColor: draft.inputType === "number" ? draft.paperColor : "none",
+      paperColorOther: draft.inputType === "number" ? draft.paperColorOther.trim() : "",
+      materialMark: draft.inputType === "number" ? draft.materialMark : "layout",
+      blankPaperFlag: draft.inputType === "number" && draft.blankPaperFlag,
+      compositeInstructionFlag: draft.inputType === "number" && draft.compositeInstructionFlag,
       bbox: normalizeBbox(draft.bbox),
     };
   }
@@ -1026,12 +1128,13 @@ export function LayoutRoughLabeler() {
       setDraft((previous) => ({
         ...previous,
         keyframeNumber: "",
+        text: "",
         materialMark: "layout",
         blankPaperFlag: false,
         compositeInstructionFlag: false,
         bbox: null,
       }));
-      setStatus("同じ画像に新しい枠と番号を追加できます。");
+      setStatus("同じ画像に新しい枠を追加できます。");
     }
   }
 
@@ -1072,6 +1175,8 @@ export function LayoutRoughLabeler() {
       setDraft((previous) => ({
         ...previous,
         keyframeNumber: "",
+        inputType: "number",
+        text: "",
         materialMark: "layout",
         blankPaperFlag: false,
         compositeInstructionFlag: false,
@@ -1128,7 +1233,7 @@ export function LayoutRoughLabeler() {
     const target = annotations.find((annotation) => annotation.id === selectedId) ?? currentAnnotations[0];
     if (!target) {
       setLocked(false);
-      setStatus("新しい枠と番号を追加できます。");
+      setStatus("新しい枠を追加できます。");
       return;
     }
 
@@ -1137,7 +1242,13 @@ export function LayoutRoughLabeler() {
     setSelectedId(target.id);
     setDraft(draftFromAnnotation(target));
     setStatus("編集モードです。保存すると選択行を更新します。");
-    window.setTimeout(() => layerInputRef.current?.focus(), 0);
+    window.setTimeout(() => {
+      if (target.inputType === "text") {
+        textInputRef.current?.focus();
+      } else if (target.inputType === "number") {
+        layerInputRef.current?.focus();
+      }
+    }, 0);
   }
 
   function addAnother() {
@@ -1148,23 +1259,24 @@ export function LayoutRoughLabeler() {
       setDraft((previous) => ({
         ...previous,
         keyframeNumber: "",
+        text: "",
         materialMark: "layout",
         blankPaperFlag: false,
         compositeInstructionFlag: false,
         bbox: null,
       }));
-      setStatus("同じ画像に新しい枠と番号を追加できます。");
+      setStatus("同じ画像に新しい枠を追加できます。");
       return;
     }
 
-    if (draft.keyframeNumber.trim() || draft.bbox) {
+    if (draft.keyframeNumber.trim() || draft.text.trim() || draft.bbox) {
       saveDraft("stay");
       return;
     }
 
     setSelectedId(null);
     setEditingId(null);
-    setStatus("同じ画像に新しい枠と番号を追加できます。");
+    setStatus("同じ画像に新しい枠を追加できます。");
   }
 
   function pointFromEvent(event: PointerEvent<SVGSVGElement>) {
@@ -1263,11 +1375,13 @@ export function LayoutRoughLabeler() {
         imageFilename: currentImage.name,
         layer: draft.layer.trim(),
         keyframeNumber: draft.keyframeNumber.trim(),
-        paperColor: draft.paperColor,
-        paperColorOther: draft.paperColorOther,
-        materialMark: draft.materialMark,
-        blankPaperFlag: draft.blankPaperFlag,
-        compositeInstructionFlag: draft.compositeInstructionFlag,
+        inputType: draft.inputType,
+        text: draft.text.trim(),
+        paperColor: draft.inputType === "number" ? draft.paperColor : "none",
+        paperColorOther: draft.inputType === "number" ? draft.paperColorOther : "",
+        materialMark: draft.inputType === "number" ? draft.materialMark : "layout",
+        blankPaperFlag: draft.inputType === "number" && draft.blankPaperFlag,
+        compositeInstructionFlag: draft.inputType === "number" && draft.compositeInstructionFlag,
         bbox: normalizedDraftBbox,
       }
     : null;
@@ -1518,13 +1632,13 @@ export function LayoutRoughLabeler() {
                                   onClick={() => openTimelineAnnotation(entry.annotation)}
                                 >
                                   <div className="relative h-16 w-full overflow-hidden rounded bg-zinc-100">
-                                    <span
+                                    {entry.annotation.inputType === "number" ? <span
                                       className={classNames(
                                         "absolute left-1 top-1 z-10 h-3.5 w-3.5 rounded-full border shadow-sm",
                                         paperColorDotClass(entry.annotation.paperColor),
                                       )}
                                       title={`色: ${paperColorLabel(entry.annotation.paperColor, entry.annotation.paperColorOther)}`}
-                                    />
+                                    /> : null}
                                     {entry.image ? (
                                       // eslint-disable-next-line @next/next/no-img-element
                                       <img
@@ -1538,12 +1652,14 @@ export function LayoutRoughLabeler() {
                                     )}
                                   </div>
                                   <div className="mt-1 truncate font-medium text-zinc-800">
-                                    {entry.annotation.layer || "-"} / {entry.annotation.keyframeNumber || "-"}
+                                    {regionInputLabel(entry.annotation)}
                                   </div>
                                   <div className="truncate text-zinc-500">
-                                    {classificationLabel(entry.classification)} /{" "}
-                                    {paperColorLabel(entry.annotation.paperColor, entry.annotation.paperColorOther)}
-                                    {entry.annotation.compositeInstructionFlag ? " / 合成" : ""}
+                                    {entry.annotation.inputType === "number" ? <>
+                                      {classificationLabel(entry.classification)} /{" "}
+                                      {paperColorLabel(entry.annotation.paperColor, entry.annotation.paperColorOther)}
+                                      {entry.annotation.compositeInstructionFlag ? " / 合成" : ""}
+                                    </> : regionInputTypeLabel(entry.annotation.inputType)}
                                   </div>
                                 </button>
                               ))}
@@ -1625,41 +1741,76 @@ export function LayoutRoughLabeler() {
 
         <section className="shrink-0 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
           <div className="grid gap-2">
-            <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
+            <fieldset className="grid gap-1">
+              <legend className="field-label">入力種別</legend>
+              <div className="grid grid-cols-3 overflow-hidden rounded-md border border-zinc-300">
+                {[
+                  ["number", "番号"],
+                  ["text", "テキスト"],
+                  ["peg_instruction", "ツメ指示"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={classNames(
+                      "min-h-8 border-r border-zinc-300 px-2 py-1 text-xs font-medium last:border-r-0",
+                      draft.inputType === value ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-50",
+                    )}
+                    disabled={locked}
+                    onClick={() => updateRegionInputType(value as RegionInputType)}
+                    aria-pressed={draft.inputType === value}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            {draft.inputType === "number" ? (
+              <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
+                <div className="grid gap-1">
+                  <label className="field-label" htmlFor="layer">レイヤー</label>
+                  <input
+                    ref={layerInputRef}
+                    id="layer"
+                    list="layer-options"
+                    className="field-control"
+                    value={draft.layer}
+                    disabled={locked}
+                    onChange={(event) => setDraft((previous) => ({ ...previous, layer: event.target.value }))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        keyframeInputRef.current?.focus();
+                      }
+                    }}
+                  />
+                </div>
+                <div className="grid gap-1">
+                  <label className="field-label" htmlFor="keyframe-number">番号</label>
+                  <input
+                    ref={keyframeInputRef}
+                    id="keyframe-number"
+                    className="field-control"
+                    value={draft.keyframeNumber}
+                    disabled={locked}
+                    onChange={(event) => setDraft((previous) => ({ ...previous, keyframeNumber: event.target.value }))}
+                  />
+                </div>
+              </div>
+            ) : draft.inputType === "text" ? (
               <div className="grid gap-1">
-                <label className="field-label" htmlFor="layer">
-                  レイヤー
-                </label>
-                <input
-                  ref={layerInputRef}
-                  id="layer"
-                  list="layer-options"
-                  className="field-control"
-                  value={draft.layer}
+                <label className="field-label" htmlFor="annotation-text">テキスト</label>
+                <textarea
+                  ref={textInputRef}
+                  id="annotation-text"
+                  className="field-control min-h-16 resize-y"
+                  value={draft.text}
                   disabled={locked}
-                  onChange={(event) => setDraft((previous) => ({ ...previous, layer: event.target.value }))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      keyframeInputRef.current?.focus();
-                    }
-                  }}
+                  onChange={(event) => setDraft((previous) => ({ ...previous, text: event.target.value }))}
                 />
               </div>
-              <div className="grid gap-1">
-                <label className="field-label" htmlFor="keyframe-number">
-                  番号
-                </label>
-                <input
-                  ref={keyframeInputRef}
-                  id="keyframe-number"
-                  className="field-control"
-                  value={draft.keyframeNumber}
-                  disabled={locked}
-                  onChange={(event) => setDraft((previous) => ({ ...previous, keyframeNumber: event.target.value }))}
-                />
-              </div>
-            </div>
+            ) : null}
             <datalist id="layer-options">
               {layerOptions.map((option) => (
                 <option key={option} value={option}>
@@ -1668,6 +1819,7 @@ export function LayoutRoughLabeler() {
               ))}
             </datalist>
 
+            {draft.inputType === "number" ? <>
             <fieldset className="grid gap-2">
               <legend className="field-label">資料種別</legend>
               <div className="grid grid-cols-2 gap-2">
@@ -1765,6 +1917,7 @@ export function LayoutRoughLabeler() {
               <span className="min-w-0 flex-1 truncate">合成指示</span>
               <span className="text-xs font-normal text-zinc-500">Ctrl+Q</span>
             </label>
+            </> : null}
 
             <div className="grid gap-2 pt-2">
               {locked ? (
@@ -1778,7 +1931,7 @@ export function LayoutRoughLabeler() {
               )}
               <div className="grid grid-cols-2 gap-2">
                 <button className="control-button" type="button" onClick={addAnother} disabled={!currentImage}>
-                  枠と番号を追加
+                  枠を追加
                 </button>
                 <button
                   className="control-button"
@@ -1811,11 +1964,13 @@ export function LayoutRoughLabeler() {
                   onClick={() => selectAnnotation(annotation)}
                 >
                   <span className="min-w-0 truncate">
-                    {rowIndex + 1}. {annotation.bbox ? "□" : "-"} {annotation.layer} / {annotation.keyframeNumber}
+                    {rowIndex + 1}. {annotation.bbox ? "□" : "-"} {regionInputLabel(annotation)}
                   </span>
                   <span className="min-w-0 truncate text-right text-xs text-zinc-500">
-                    {classificationLabel(classifyAnnotation(annotation))} / {paperColorLabel(annotation.paperColor, annotation.paperColorOther)}
-                    {annotation.compositeInstructionFlag ? " / 合成" : ""}
+                    {annotation.inputType === "number" ? <>
+                      {classificationLabel(classifyAnnotation(annotation))} / {paperColorLabel(annotation.paperColor, annotation.paperColorOther)}
+                      {annotation.compositeInstructionFlag ? " / 合成" : ""}
+                    </> : regionInputTypeLabel(annotation.inputType)}
                   </span>
                 </button>
               ))
